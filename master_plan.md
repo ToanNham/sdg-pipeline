@@ -8,7 +8,7 @@
 
 **Goal:** A Python script that runs inside Blender headless mode, loads your 3D model, randomizes a scene, renders RGB images, extracts segmentation masks, and writes paired COCO JSON annotations. Target: 50 images for demo, architected to scale to 2,000.
 
-**Stack:** Blender 3.6 LTS, bpy, Cycles renderer, OpenEXR (Cryptomatte passes), NumPy, Pillow, scikit-image, pycocotools, PyYAML.
+**Stack:** Blender 4.2 LTS, bpy, Cycles renderer, NumPy, Pillow, scikit-image, pycocotools, PyYAML.
 
 **Launch command:**
 ```
@@ -25,6 +25,8 @@ sdg_pipeline/
 ├── config.yaml
 ├── merge_coco.py
 ├── validate_output.py
+├── base_scene.blend         ← KV-aligned scene (camera/lights/background/collections)
+├── KV example datagen.blend ← reference scene (do not modify)
 │
 ├── pipeline/
 │   ├── __init__.py
@@ -45,12 +47,12 @@ sdg_pipeline/
 │   ├── images/
 │   ├── masks/
 │   ├── masks_instance/
-│   ├── tmp/
 │   └── annotations/
 │
 └── scripts/
     ├── install_deps.sh
-    └── render_parallel.sh
+    ├── render_parallel.sh
+    └── setup_base_scene.py  ← regenerates base_scene.blend from KV example
 ```
 
 ---
@@ -69,8 +71,7 @@ $BLENDER_PY -m pip install \
   Pillow \
   scikit-image \
   shapely \
-  pycocotools \
-  OpenEXR
+  pycocotools
 ```
 
 ---
@@ -228,13 +229,13 @@ class AssetRegistry:
 **What it builds:** pipeline/scene_builder.py
 
 **Responsibilities:**
-- Clear all mesh objects from the scene (preserve camera and lights)
-- Import target model (.obj, .fbx, or .blend)
-- Spawn N copies/instances of the model at the origin
+- Clear the `Randomize`, `Occluders`, and `Distractors` collections (preserves camera, lights, Background plane, Bounds empties)
+- Import target models (.glb) into the `Randomize` collection
+- Spawn distractor meshes into `Distractors` and primitives into `Occluders`
 - Add a shadow catcher plane so objects cast shadows on the background
 - Set background image via World environment node
-- Assign unique integer inst_id to every target object as a custom property
-- Spawn distractor objects (primitives + meshes) and tag them is_distractor=True
+- Assign unique integer `inst_id` and `pass_index` to every target object (required for ID_MASK compositor nodes)
+- Tag distractors with `is_distractor=True` to exclude from annotations
 
 **Key bpy APIs used:**
 
@@ -290,7 +291,7 @@ def add_shadow_catcher() -> None
     # adds a large plane, marks it shadow catcher
 
 def assign_instance_ids(objects: list, start: int = 1) -> dict
-    # assigns obj["inst_id"] = start+i, returns {inst_id: obj.name}
+    # assigns obj["inst_id"] = start+i AND obj.pass_index = start+i, returns {inst_id: obj.name}
 ```
 
 **Return value contract for main loop:**
@@ -460,35 +461,36 @@ def _apply_texture_set(nodes, links, bsdf, tex_dir: Path):
 
 **What it builds:** pipeline/renderer.py + pipeline/mask_extractor.py
 
+**Masking approach: Object Index (ID_MASK)** — not Cryptomatte. For this pipeline (opaque rigid objects, no depth of field), ID_MASK produces identical results with far less complexity: no EXR, no OpenImageIO, no hashing. Each target object gets `obj.pass_index = inst_id`. The compositor creates one `CompositorNodeIDMask` per object, reads from `IndexOB`, and writes a binary PNG per object directly. See `NOTES.md` for the full decision rationale.
+
 **renderer.py responsibilities:**
 - Configure Cycles settings from config
-- Enable Cryptomatte Object pass on the view layer
-- Set up compositor to write RGB PNG and multilayer EXR in a single render call
+- Enable Object Index pass on the view layer (`use_pass_object_index = True`)
+- Set up compositor: one ID_MASK node per target object → binary mask PNG; plus RGB PNG output
 - Execute render
 
 **renderer.py key implementation:**
 
 ```python
-import bpy
 from pathlib import Path
 
 def configure_cycles(scene, cfg):
-    rc = cfg["render"]
-    scene.render.engine           = "CYCLES"
-    scene.cycles.device           = rc["device"]
-    scene.cycles.samples          = rc["samples"]
-    scene.render.resolution_x     = rc["resolution_x"]
-    scene.render.resolution_y     = rc["resolution_y"]
-
-    if rc.get("use_denoiser"):
+    r = cfg["render"]
+    scene.render.engine       = "CYCLES"
+    scene.cycles.device       = r["device"]
+    scene.cycles.samples      = r["samples"]
+    scene.render.resolution_x = r["resolution_x"]
+    scene.render.resolution_y = r["resolution_y"]
+    if r.get("use_denoiser"):
         scene.cycles.use_denoising = True
-        scene.cycles.denoiser      = rc.get("denoiser", "OPENIMAGEDENOISE")
+        scene.cycles.denoiser      = r["denoiser"]
+    else:
+        scene.cycles.use_denoising = False
 
-def enable_cryptomatte(view_layer):
-    view_layer.cycles.use_pass_crypto_object = True
-    view_layer.cycles.pass_crypto_depth      = 2
+def enable_object_index_pass(view_layer):
+    view_layer.use_pass_object_index = True
 
-def setup_compositor(scene, img_idx: int, output_dir: Path):
+def setup_compositor(scene, img_idx: int, output_dir: Path, id_map: dict):
     scene.use_nodes = True
     tree = scene.node_tree
     tree.nodes.clear()
@@ -496,136 +498,73 @@ def setup_compositor(scene, img_idx: int, output_dir: Path):
     rl = tree.nodes.new("CompositorNodeRLayers")
 
     # RGB PNG output
-    rgb_out = tree.nodes.new("CompositorNodeOutputFile")
-    rgb_out.base_path = str(output_dir / "images")
-    rgb_out.file_slots[0].path        = f"{img_idx:04d}_"
-    rgb_out.format.file_format        = "PNG"
-    rgb_out.format.color_mode         = "RGB"
+    png_out = tree.nodes.new("CompositorNodeOutputFile")
+    png_out.base_path = str(output_dir / "images")
+    png_out.file_slots[0].path = f"{img_idx:04d}_"
+    png_out.format.file_format = "PNG"
+    png_out.format.color_mode  = "RGB"
+    tree.links.new(rl.outputs["Image"], png_out.inputs[0])
 
-    # Multilayer EXR output (carries Cryptomatte passes)
-    exr_out = tree.nodes.new("CompositorNodeOutputFile")
-    exr_out.base_path = str(output_dir / "tmp")
-    exr_out.file_slots[0].path        = f"{img_idx:04d}_"
-    exr_out.format.file_format        = "OPEN_EXR_MULTILAYER"
-    exr_out.format.color_depth        = "32"
+    if not id_map:
+        return
 
-    tree.links.new(rl.outputs["Image"], rgb_out.inputs[0])
-    tree.links.new(rl.outputs["Image"], exr_out.inputs[0])
+    # One ID_MASK node + File Output slot per target object
+    mask_out = tree.nodes.new("CompositorNodeOutputFile")
+    mask_out.base_path = str(output_dir / "masks_instance")
+    mask_out.format.file_format = "PNG"
+    mask_out.format.color_mode  = "BW"
+    mask_out.file_slots.clear()
+
+    for inst_id in sorted(id_map.keys()):
+        id_mask = tree.nodes.new("CompositorNodeIDMask")
+        id_mask.index = inst_id
+        id_mask.use_antialiasing = False
+        tree.links.new(rl.outputs["IndexOB"], id_mask.inputs["ID value"])
+        slot = mask_out.file_slots.new(f"{img_idx:04d}_inst_{inst_id}_")
+        tree.links.new(id_mask.outputs["Alpha"], mask_out.inputs[slot.name])
 
 def render(scene):
-    bpy.ops.render.render(write_still=False)
+    import bpy
+    bpy.ops.render.render()
 ```
 
 **mask_extractor.py responsibilities:**
-- Read the multilayer EXR
-- Decode Cryptomatte float32 channels into per-object binary masks
-- Map Blender's internal object hashes back to inst_id integers
-- Return dict of {inst_id: numpy uint8 mask array}
+- Load binary mask PNGs written by the compositor's ID_MASK nodes
 - Build semantic mask (pixel value = category_id)
 
-**The MurmurHash2 function — this is required to map Cryptomatte hashes back to object names:**
+**mask_extractor.py implementation:**
 
 ```python
-import struct, numpy as np
-
-def mm2_hash_str(name: str) -> float:
-    """Blender's internal Cryptomatte hash for an object name."""
-    data = name.encode("utf-8")
-    seed = 0
-    m    = 0xc6a4a793
-    r    = 24
-    h    = seed ^ (len(data) * m)
-    off  = 0
-    while off + 4 <= len(data):
-        k = struct.unpack_from("<I", data, off)[0]
-        k  = (k * m) & 0xFFFFFFFF
-        k ^= k >> 16
-        k  = (k * m) & 0xFFFFFFFF
-        h ^= k
-        h  = (h * m) & 0xFFFFFFFF
-        off += 4
-    remaining = len(data) - off
-    if remaining >= 3: h ^= data[off + 2] << 16
-    if remaining >= 2: h ^= data[off + 1] << 8
-    if remaining >= 1:
-        h ^= data[off]
-        h  = (h * m) & 0xFFFFFFFF
-    h ^= h >> 13
-    h  = (h * m) & 0xFFFFFFFF
-    h ^= h >> 15
-    h = h & 0xFFFFFFFF
-    # Reinterpret as float32
-    return struct.unpack("f", struct.pack("I", h))[0]
-```
-
-**mask_extractor.py main extraction:**
-
-```python
-import OpenEXR
 import numpy as np
 from pathlib import Path
+from PIL import Image
 
-def extract_instance_masks(exr_path: Path, id_map: dict) -> dict:
+def load_instance_masks(img_idx: int, id_map: dict, output_dir: Path) -> dict:
     """
     id_map: {inst_id: obj_name}
     returns: {inst_id: np.ndarray uint8 (H,W), values 0 or 255}
+    Files: output_dir/masks_instance/{img_idx:04d}_inst_{inst_id}_0001.png
     """
-    # Build hash lookup: float32_hash -> inst_id
-    hash_to_id = {}
-    for inst_id, obj_name in id_map.items():
-        h = mm2_hash_str(obj_name)
-        hash_to_id[struct.pack("f", struct.pack("f", h))[0]] = inst_id
-        # Simpler: store the raw float value
-        hash_to_id[mm2_hash_str(obj_name)] = inst_id
-
-    with OpenEXR.File(str(exr_path), separate_channels=True) as f:
-        channels = f.channels()
-
-    crypto_layers = sorted(k for k in channels
-                           if "CryptoObject" in k and k.endswith((".R",".G",".B",".A")))
-
-    # Each CryptoObjectNN layer has R=id0, G=weight0, B=id1, A=weight1
-    H, W = next(iter(channels.values())).pixels.shape
-    coverage = {}   # {inst_id: float32 coverage array (H,W)}
-
-    # Group by layer prefix e.g. "ViewLayer.CryptoObject00"
-    prefixes = sorted(set(".".join(k.split(".")[:-1])
-                          for k in crypto_layers))
-
-    for prefix in prefixes:
-        R = channels[prefix + ".R"].pixels
-        G = channels[prefix + ".G"].pixels
-        B = channels[prefix + ".B"].pixels
-        A = channels[prefix + ".A"].pixels
-
-        for id_arr, weight_arr in [(R, G), (B, A)]:
-            for inst_id, obj_hash in zip(id_map.keys(),
-                                          [mm2_hash_str(n)
-                                           for n in id_map.values()]):
-                pixel_match = (id_arr == obj_hash)
-                if not np.any(pixel_match):
-                    continue
-                if inst_id not in coverage:
-                    coverage[inst_id] = np.zeros((H, W), dtype=np.float32)
-                coverage[inst_id] += weight_arr * pixel_match
-
     result = {}
-    for inst_id, cov in coverage.items():
-        result[inst_id] = ((cov > 0.5).astype(np.uint8) * 255)
-
+    for inst_id in id_map:
+        path = output_dir / "masks_instance" / f"{img_idx:04d}_inst_{inst_id}_0001.png"
+        if not path.exists():
+            continue
+        arr = np.array(Image.open(path).convert("L"))
+        if arr.any():
+            result[inst_id] = (arr > 127).astype(np.uint8) * 255
     return result
 
 def build_semantic_mask(instance_masks: dict, category_map: dict,
                         H: int, W: int) -> np.ndarray:
     semantic = np.zeros((H, W), dtype=np.uint8)
     for inst_id, mask in instance_masks.items():
-        cat_id = category_map.get(inst_id, 0)
-        semantic[mask > 0] = cat_id
+        semantic[mask > 0] = category_map.get(inst_id, 0)
     return semantic
 ```
 
 **Prompt for Claude session:**
-> "Build Phase 4 of this SDG pipeline. Implement pipeline/renderer.py and pipeline/mask_extractor.py exactly as specified in the master design document. Include the MurmurHash2 implementation verbatim — do not substitute a different hash. The mask extractor must return {inst_id: numpy uint8 array} and must handle the case where an object has no visible pixels gracefully (just omit it from the result dict)."
+> "Build Phase 4 of this SDG pipeline. Implement pipeline/renderer.py and pipeline/mask_extractor.py using the ID_MASK approach in the master design document. setup_compositor() takes an id_map parameter and creates one CompositorNodeIDMask per object. mask_extractor loads the PNG files written by the compositor — no EXR, no hashing."
 
 ---
 
@@ -719,9 +658,9 @@ from pipeline.scene_builder     import (clear_scene, spawn_targets,
 from pipeline.randomizer        import (randomize_camera, randomize_lights,
                                          randomize_object_transform,
                                          randomize_material)
-from pipeline.renderer          import (configure_cycles, enable_cryptomatte,
+from pipeline.renderer          import (configure_cycles, enable_object_index_pass,
                                          setup_compositor, render)
-from pipeline.mask_extractor    import extract_instance_masks, build_semantic_mask
+from pipeline.mask_extractor    import load_instance_masks, build_semantic_mask
 from pipeline.annotation_writer import (save_semantic_mask, save_instance_mask,
                                          mask_to_polygons, compute_bbox,
                                          init_coco, write_coco)
@@ -739,7 +678,7 @@ with open(args.config) as f:
     cfg = yaml.safe_load(f)
 
 output_dir = Path(cfg["output_dir"])
-for d in ["images", "masks", "masks_instance", "tmp", "annotations"]:
+for d in ["images", "masks", "masks_instance", "annotations"]:
     (output_dir / d).mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -757,7 +696,7 @@ registry   = AssetRegistry.from_config(cfg)
 end        = args.end or cfg["num_images"]
 
 configure_cycles(scene, cfg)
-enable_cryptomatte(view_layer)
+enable_object_index_pass(view_layer)
 
 coco    = init_coco(cfg)
 ann_id  = 0
@@ -794,24 +733,19 @@ for img_idx in range(args.start, end):
         randomize_object_transform(obj, rng)
         randomize_material(obj, rng, cfg, texture_asset=tex)
 
-    # 3. Render (single pass, compositor writes RGB + EXR)
-    exr_path = output_dir / "tmp" / f"{img_idx:04d}_0001.exr"
-    setup_compositor(scene, img_idx, output_dir)
+    # 3. Render — compositor writes RGB PNG + per-object mask PNGs
+    setup_compositor(scene, img_idx, output_dir, id_map)
     render(scene)
 
-    # 4. Extract masks
+    # 4. Load masks (written by compositor ID_MASK nodes)
     H = cfg["render"]["resolution_y"]
     W = cfg["render"]["resolution_x"]
-    instance_masks = extract_instance_masks(exr_path, id_map)
+    instance_masks = load_instance_masks(img_idx, id_map, output_dir)
     semantic_mask  = build_semantic_mask(instance_masks, category_map, H, W)
 
-    # 5. Save masks
+    # 5. Save semantic mask
     save_semantic_mask(semantic_mask,
                        output_dir / "masks" / f"{img_idx:04d}_semantic.png")
-    for inst_id, mask in instance_masks.items():
-        save_instance_mask(mask,
-                           output_dir / "masks_instance" /
-                           f"{img_idx:04d}_inst_{inst_id}.png")
 
     # 6. COCO annotations (target objects only, skip distractors)
     img_w, img_h = W, H
@@ -837,10 +771,6 @@ for img_idx in range(args.start, end):
             "iscrowd":      0
         })
         ann_id += 1
-
-    # 7. Cleanup temp EXR
-    if exr_path.exists():
-        exr_path.unlink()
 
     elapsed = time.perf_counter() - t0
     logging.info(f"img={img_idx:04d} | objects={len(target_objs)} | "

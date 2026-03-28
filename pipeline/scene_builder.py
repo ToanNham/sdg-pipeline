@@ -8,20 +8,31 @@ import bpy  # module-level import is fine; do NOT call bpy.* at module level
 # ---------------------------------------------------------------------------
 
 def clear_scene() -> None:
-    """Remove all MESH objects; preserve CAMERA and LIGHT objects."""
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            obj.select_set(True)
-    bpy.ops.object.delete()
+    """Remove all objects from the Randomize, Occluders, and Distractors collections.
+
+    Preserves persistent objects (Camera, Background plane, Lights, Bounds).
+    """
+    for col_name in ("Randomize", "Occluders", "Distractors"):
+        col = bpy.data.collections.get(col_name)
+        if col is None:
+            continue
+        for obj in list(col.objects):
+            col.objects.unlink(obj)
+            bpy.data.objects.remove(obj, do_unlink=True)
 
 
 # ---------------------------------------------------------------------------
 # Model import
 # ---------------------------------------------------------------------------
 
-def import_model(path: Path) -> list:
-    """Import a model file and return newly added MESH objects."""
+def import_model(path: Path, collection_name: str = None) -> list:
+    """Import a model file and return newly added MESH objects.
+
+    Args:
+        path:            Path to model file (.glb/.gltf/.obj/.fbx/.blend)
+        collection_name: If given, link new objects into this named collection
+                         instead of the default active collection.
+    """
     path = Path(path).resolve()
     before = set(bpy.data.objects)
     suffix = path.suffix.lower()
@@ -42,7 +53,18 @@ def import_model(path: Path) -> list:
         raise ValueError(f"Unsupported model format: {suffix}")
 
     after = set(bpy.data.objects)
-    return [obj for obj in (after - before) if obj.type == 'MESH']
+    new_objs = [obj for obj in (after - before) if obj.type == 'MESH']
+
+    if collection_name:
+        col = bpy.data.collections.get(collection_name)
+        if col is not None:
+            for obj in new_objs:
+                # Move from whatever collection the import put it in
+                for src_col in list(obj.users_collection):
+                    src_col.objects.unlink(obj)
+                col.objects.link(obj)
+
+    return new_objs
 
 
 # ---------------------------------------------------------------------------
@@ -50,10 +72,10 @@ def import_model(path: Path) -> list:
 # ---------------------------------------------------------------------------
 
 def spawn_targets(assets: list, rng, cfg) -> list:
-    """Import each target asset; return flat list of all spawned MESH objects."""
+    """Import each target asset into the Randomize collection."""
     all_objects = []
     for asset in assets:
-        objs = import_model(asset.path)
+        objs = import_model(asset.path, collection_name="Randomize")
         for obj in objs:
             obj["category_id"] = asset.category_id
             obj["category_name"] = asset.category_name
@@ -72,14 +94,14 @@ def spawn_distractors(registry, rng, cfg) -> list:
 
     spawned = []
 
-    # Spawn mesh distractors
+    # Spawn mesh distractors into Distractors collection
     for asset in mesh_assets:
-        objs = import_model(asset.path)
+        objs = import_model(asset.path, collection_name="Distractors")
         for obj in objs:
             obj["is_distractor"] = True
         spawned.extend(objs)
 
-    # Pad with primitives if enabled and not enough mesh assets
+    # Pad with primitives into Occluders collection
     n_prim = max(0, n - len(mesh_assets)) if use_primitives else 0
     _PRIMITIVE_OPS = [
         bpy.ops.mesh.primitive_cube_add,
@@ -88,6 +110,7 @@ def spawn_distractors(registry, rng, cfg) -> list:
         bpy.ops.mesh.primitive_cone_add,
         bpy.ops.mesh.primitive_torus_add,
     ]
+    occluders_col = bpy.data.collections.get("Occluders")
     for _ in range(n_prim):
         before = set(bpy.data.objects)
         _PRIMITIVE_OPS[int(rng.integers(0, len(_PRIMITIVE_OPS)))]()
@@ -95,6 +118,10 @@ def spawn_distractors(registry, rng, cfg) -> list:
         new_objs = [o for o in (after - before) if o.type == 'MESH']
         for obj in new_objs:
             obj["is_distractor"] = True
+            if occluders_col is not None:
+                for src_col in list(obj.users_collection):
+                    src_col.objects.unlink(obj)
+                occluders_col.objects.link(obj)
         spawned.extend(new_objs)
 
     return spawned
@@ -142,10 +169,11 @@ def add_shadow_catcher() -> None:
 # ---------------------------------------------------------------------------
 
 def assign_instance_ids(objects: list, start: int = 1) -> dict:
-    """Assign sequential inst_id custom properties; return {inst_id: obj.name}."""
+    """Assign sequential inst_id and pass_index to each object; return {inst_id: obj.name}."""
     id_map = {}
     for i, obj in enumerate(objects):
         inst_id = start + i
         obj["inst_id"] = inst_id
+        obj.pass_index = inst_id  # required for IndexOB / ID_MASK compositor nodes
         id_map[inst_id] = obj.name
     return id_map

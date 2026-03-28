@@ -1,4 +1,6 @@
-import sys, argparse, yaml, logging, time
+import sys, site
+sys.path.insert(0, site.getusersitepackages())
+import argparse, yaml, logging, time
 from pathlib import Path
 import numpy as np
 import bpy
@@ -7,17 +9,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pipeline.asset_registry   import AssetRegistry
 from pipeline.scene_builder     import (clear_scene, spawn_targets,
-                                         spawn_distractors, set_background,
-                                         add_shadow_catcher, assign_instance_ids)
+                                        spawn_distractors, set_background,
+                                        add_shadow_catcher, assign_instance_ids)
 from pipeline.randomizer        import (randomize_camera, randomize_lights,
-                                         randomize_object_transform,
-                                         randomize_material)
-from pipeline.renderer          import (configure_cycles, enable_cryptomatte,
-                                         setup_compositor, render)
-from pipeline.mask_extractor    import extract_instance_masks, build_semantic_mask
+                                        randomize_object_transform,
+                                        randomize_material)
+from pipeline.renderer          import (configure_cycles, enable_object_index_pass,
+                                        setup_compositor, render)
+from pipeline.mask_extractor    import load_instance_masks, build_semantic_mask
 from pipeline.annotation_writer import (save_semantic_mask, save_instance_mask,
-                                         mask_to_polygons, compute_bbox,
-                                         init_coco, write_coco)
+                                        mask_to_polygons, compute_bbox,
+                                        init_coco, write_coco)
 
 # ── Argument parsing (after the -- separator) ──────────────────────────────
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -31,8 +33,8 @@ args = parser.parse_args(argv)
 with open(args.config) as f:
     cfg = yaml.safe_load(f)
 
-output_dir = Path(cfg["output_dir"])
-for d in ["images", "masks", "masks_instance", "tmp", "annotations"]:
+output_dir = (Path(args.config).parent / cfg["output_dir"]).resolve()
+for d in ["images", "masks", "masks_instance", "annotations"]:
     (output_dir / d).mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -50,7 +52,7 @@ registry   = AssetRegistry.from_config(cfg)
 end        = args.end or cfg["num_images"]
 
 configure_cycles(scene, cfg)
-enable_cryptomatte(view_layer)
+enable_object_index_pass(view_layer)
 
 coco    = init_coco(cfg)
 ann_id  = 0
@@ -87,32 +89,26 @@ for img_idx in range(args.start, end):
         randomize_object_transform(obj, rng)
         randomize_material(obj, rng, cfg, texture_asset=tex)
 
-    # 3. Render (single pass, compositor writes RGB + EXR)
-    exr_path = output_dir / "tmp" / f"{img_idx:04d}_0001.exr"
-    setup_compositor(scene, img_idx, output_dir)
+    # 3. Render — compositor writes RGB PNG + per-object mask PNGs
+    setup_compositor(scene, img_idx, output_dir, id_map)
     render(scene)
 
-    # 4. Extract masks
+    # 4. Load masks (written by compositor)
     H = cfg["render"]["resolution_y"]
     W = cfg["render"]["resolution_x"]
-    instance_masks = extract_instance_masks(exr_path, id_map)
+    instance_masks = load_instance_masks(img_idx, id_map, output_dir)
     semantic_mask  = build_semantic_mask(instance_masks, category_map, H, W)
 
-    # 5. Save masks
+    # 5. Save semantic mask
     save_semantic_mask(semantic_mask,
                        output_dir / "masks" / f"{img_idx:04d}_semantic.png")
-    for inst_id, mask in instance_masks.items():
-        save_instance_mask(mask,
-                           output_dir / "masks_instance" /
-                           f"{img_idx:04d}_inst_{inst_id}.png")
 
-    # 6. COCO annotations (target objects only, skip distractors)
-    img_w, img_h = W, H
+    # 6. COCO annotations (target objects only)
     coco["images"].append({
         "id":        img_idx,
         "file_name": f"images/{img_idx:04d}_0001.png",
-        "width":     img_w,
-        "height":    img_h
+        "width":     W,
+        "height":    H
     })
     for inst_id, mask in instance_masks.items():
         polygons = mask_to_polygons(mask)
@@ -121,19 +117,15 @@ for img_idx in range(args.start, end):
         area = int(np.sum(mask > 0))
         bbox = compute_bbox(mask)
         coco["annotations"].append({
-            "id":          ann_id,
-            "image_id":    img_idx,
-            "category_id": category_map.get(inst_id, 1),
+            "id":           ann_id,
+            "image_id":     img_idx,
+            "category_id":  category_map.get(inst_id, 1),
             "segmentation": polygons,
             "area":         area,
             "bbox":         bbox,
             "iscrowd":      0
         })
         ann_id += 1
-
-    # 7. Cleanup temp EXR
-    if exr_path.exists():
-        exr_path.unlink()
 
     elapsed = time.perf_counter() - t0
     logging.info(f"img={img_idx:04d} | objects={len(target_objs)} | "
