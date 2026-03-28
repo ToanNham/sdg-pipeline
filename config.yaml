@@ -1,0 +1,54 @@
+render:
+  engine: CYCLES
+  device: GPU                  # GPU or CPU
+  samples: 64
+  use_denoiser: true
+  denoiser: OPENIMAGEDENOISE   # or OPTIX for NVIDIA
+  resolution_x: 1920
+  resolution_y: 1080
+
+scene:
+  objects_per_scene_min: 1
+  objects_per_scene_max: 4
+  distractors_min: 2
+  distractors_max: 6
+
+camera:
+  distance_min: 1.5
+  distance_max: 4.0
+  elevation_min_deg: 15
+  elevation_max_deg: 75
+  focal_length_min: 35
+  focal_length_max: 85
+
+lighting:
+  num_lights_min: 1
+  num_lights_max: 3
+  intensity_min: 500
+  intensity_max: 4000
+  color_temp_min: 3200
+  color_temp_max: 6500
+
+material:
+  randomize_color: true
+  randomize_roughness: true
+  roughness_min: 0.05
+  roughness_max: 0.95
+  randomize_metallic: true
+  use_texture_sets: true        # applies to distractors/primitives only; skipped for assets with embedded textures
+
+assets:
+  models:
+    - path: assets/models/
+      glob: "*.glb"             # .glb files include embedded textures
+      category_id: 1
+      category_name: your_object
+  distractors:
+    meshes: assets/distractors/
+    use_primitives: true
+  textures: assets/textures/    # used for distractors/primitives only
+  backgrounds: assets/backgrounds/
+
+output_dir: output/
+num_images: 50
+seed: 42
