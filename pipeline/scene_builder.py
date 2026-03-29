@@ -110,12 +110,14 @@ def spawn_distractors(registry, rng, cfg) -> list:
 
     # Pad with primitives into Occluders collection
     n_prim = max(0, n - len(mesh_assets)) if use_primitives else 0
+    prim_size = float(cfg["scene"].get("distractor_primitive_size", 0.2))
+    half = prim_size / 2.0
     _PRIMITIVE_OPS = [
-        bpy.ops.mesh.primitive_cube_add,
-        bpy.ops.mesh.primitive_uv_sphere_add,
-        bpy.ops.mesh.primitive_cylinder_add,
-        bpy.ops.mesh.primitive_cone_add,
-        bpy.ops.mesh.primitive_torus_add,
+        lambda: bpy.ops.mesh.primitive_cube_add(size=prim_size),
+        lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=half),
+        lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half),
+        lambda: bpy.ops.mesh.primitive_cone_add(radius1=half),
+        lambda: bpy.ops.mesh.primitive_torus_add(major_radius=half, minor_radius=half * 0.3),
     ]
     occluders_col = bpy.data.collections.get("Occluders")
     for _ in range(n_prim):

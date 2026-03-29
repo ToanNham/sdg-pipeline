@@ -14,8 +14,7 @@ scene:
   per_class_max: 2               # max instances spawned per model category per image
   distractors_min: 2
   distractors_max: 6
-  distractor_scale_min: 0.05
-  distractor_scale_max: 0.15
+  distractor_primitive_size: 0.2  # diameter (meters) for spawned primitive occluders
   target_spread: 0.5              # fallback XY spread if Bounds empties not found
   background_roughness_min: 0.3
   background_roughness_max: 1.0

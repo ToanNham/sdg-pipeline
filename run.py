@@ -100,16 +100,13 @@ for img_idx in range(args.start, end):
             bg_roughness = randomize_background_material(scene, rng, cfg, bg[0].path)
         tex = registry.sample("textures", rng, n=1)
         tex = tex[0] if tex else None
-        d_scale_min = cfg["scene"].get("distractor_scale_min", 0.05)
-        d_scale_max = cfg["scene"].get("distractor_scale_max", 0.15)
         t_spread = cfg["scene"].get("target_spread", 0.5)
         for obj in target_objs:
             randomize_object_transform(obj, rng, spread=t_spread,
                                        bounds_objs=BOUNDS_OBJS, randomize_scale=False)
             randomize_material(obj, rng, cfg, texture_asset=tex)
         for obj in distractor_objs:
-            randomize_object_transform(obj, rng, scale_min=d_scale_min, scale_max=d_scale_max,
-                                       bounds_objs=BOUNDS_OBJS, randomize_scale=True)
+            randomize_object_transform(obj, rng, bounds_objs=BOUNDS_OBJS, randomize_scale=False)
             randomize_material(obj, rng, cfg, texture_asset=tex)
 
     # In debug mode, read light info from whatever is in the scene
