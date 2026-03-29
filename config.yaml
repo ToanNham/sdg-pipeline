@@ -5,8 +5,11 @@ render:
   samples: 20
   use_denoiser: true
   denoiser: OPENIMAGEDENOISE   # or OPTIX for NVIDIA
-  resolution_x: 1080
-  resolution_y: 1080
+  denoiser_use_gpu: true       # OIDN GPU mode (Blender 4.0+); ignored if denoiser != OPENIMAGEDENOISE
+  adaptive_threshold: 0.05     # noise threshold for adaptive sampling (0 = disabled)
+  resolution_x: 640
+  resolution_y: 640
+  save_blends: false           # set true to save .blend per frame (slow; for debugging only)
 
 scene:
   objects_per_scene_min: 1       # kept for reference; per-class counts now control spawn

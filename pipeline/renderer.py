@@ -45,9 +45,15 @@ def configure_cycles(scene, cfg) -> None:
     scene.render.resolution_x = r["resolution_x"]
     scene.render.resolution_y = r["resolution_y"]
 
+    if r.get("adaptive_threshold"):
+        scene.cycles.use_adaptive_sampling = True
+        scene.cycles.adaptive_threshold = r["adaptive_threshold"]
+
     if r.get("use_denoiser"):
         scene.cycles.use_denoising = True
-        scene.cycles.denoiser = r["denoiser"]
+        scene.cycles.denoiser = r.get("denoiser", "OPENIMAGEDENOISE")
+        if r.get("denoiser_use_gpu"):
+            scene.cycles.denoising_use_gpu = True
     else:
         scene.cycles.use_denoising = False
 
@@ -153,3 +159,27 @@ def render(scene) -> None:
     import bpy
     scene.frame_current = 1  # ensures compositor appends _0001 suffix
     bpy.ops.render.render()
+
+
+# ---------------------------------------------------------------------------
+# Extensibility wrapper
+# ---------------------------------------------------------------------------
+
+class Renderer:
+    """Thin wrapper around module-level renderer functions.
+
+    Subclass and override individual methods to customise rendering behaviour
+    without touching any other part of the pipeline.
+    """
+
+    def configure(self, scene, cfg):
+        configure_cycles(scene, cfg)
+
+    def enable_index_pass(self, view_layer):
+        enable_object_index_pass(view_layer)
+
+    def setup_compositor(self, scene, img_idx, output_dir, id_map, inst_colors):
+        setup_compositor(scene, img_idx, output_dir, id_map, inst_colors)
+
+    def render(self, scene):
+        render(scene)
