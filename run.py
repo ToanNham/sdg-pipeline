@@ -8,21 +8,17 @@ import bpy
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pipeline.asset_registry   import AssetRegistry
-from pipeline.scene_builder     import (clear_scene, spawn_targets,
-                                        spawn_distractors, set_background,
-                                        assign_instance_ids)
-from pipeline.randomizer        import (randomize_camera, randomize_lights,
+from pipeline.scene_builder     import (set_background,
+                                        build_target_pool, build_distractor_pool,
+                                        activate_frame_objects)
+from pipeline.randomizer        import (randomize_camera, randomize_light_inplace,
                                         randomize_object_transform,
                                         randomize_material,
                                         randomize_background_material)
 from pipeline.renderer          import (configure_cycles, enable_object_index_pass,
                                         setup_compositor, render)
-from pipeline.mask_extractor    import load_instance_masks, build_semantic_mask
-from pipeline.annotation_writer import (save_semantic_mask, save_instance_mask,
-                                        save_instance_color_mask,
-                                        assign_instance_colors,
-                                        mask_to_polygons, compute_bbox,
-                                        init_coco, write_coco, write_label_json)
+from pipeline.annotation_writer import (assign_instance_colors,
+                                        write_label_json)
 
 # ── Argument parsing (after the -- separator) ──────────────────────────────
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -39,7 +35,7 @@ with open(args.config) as f:
     cfg = yaml.safe_load(f)
 
 output_dir = (Path(args.config).parent / cfg["output_dir"]).resolve()
-for d in ["images", "masks", "masks_instance", "annotations", "labels", "blends"]:
+for d in ["images", "masks", "labels", "blends"]:
     (output_dir / d).mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -59,35 +55,33 @@ end        = (args.start + 1) if args.debug else (args.end or cfg["num_images"])
 configure_cycles(scene, cfg)
 enable_object_index_pass(view_layer)
 
-coco    = init_coco(cfg)
-ann_id  = 0
 cam_obj     = scene.camera
 bounds_col  = bpy.data.collections.get("Bounds")
 BOUNDS_OBJS = [o for o in bounds_col.objects if o.type == "EMPTY"] if bounds_col else []
+
+# ── Pre-spawn phase (once) ──────────────────────────────────────────────────
+target_pool     = build_target_pool(registry, cfg)
+distractor_pool = build_distractor_pool(registry, cfg)
+pool_light      = next((o for o in scene.objects if o.type == "LIGHT"), None)
+static_category_map = {
+    obj.pass_index: obj.get("category_id", 1)
+    for objs in target_pool.values() for obj in objs
+}
 
 # ── Main loop ───────────────────────────────────────────────────────────────
 for img_idx in range(args.start, end):
     t0  = time.perf_counter()
     rng = np.random.default_rng(cfg["seed"] + img_idx)
 
-    # 1. Scene
-    clear_scene()
+    # 1. Scene — activate objects for this frame
+    active_targets, active_distractors, id_map = activate_frame_objects(
+        target_pool, distractor_pool, rng, cfg
+    )
     bg = registry.sample("backgrounds", rng, n=1)
     if bg:
         set_background(bg[0].path)
 
-    per_class_min = cfg["scene"].get("per_class_min", 1)
-    per_class_max = cfg["scene"].get("per_class_max", 2)
-    target_assets = []
-    for asset in registry._pools["models"]:
-        count = int(rng.integers(per_class_min, per_class_max + 1))
-        target_assets.extend([asset] * count)
-    target_objs   = spawn_targets(target_assets, rng, cfg)
-    distractor_objs = spawn_distractors(registry, rng, cfg)
-
-    id_map       = assign_instance_ids(target_objs, start=1)
-    category_map = {iid: bpy.data.objects[name].get("category_id", 1)
-                    for iid, name in id_map.items()}
+    category_map = {pid: static_category_map[pid] for pid in id_map}
     inst_colors  = assign_instance_colors(id_map)  # {inst_id: (R,G,B)} — shared by PNG + label
 
     # 2. Randomize (skipped in --debug mode)
@@ -95,37 +89,35 @@ for img_idx in range(args.start, end):
     light_info  = {}
     bg_roughness = 0.5
     if not args.debug:
-        light_info  = randomize_lights(scene, rng, cfg)
+        if pool_light:
+            light_info = randomize_light_inplace(pool_light, rng, cfg)
         if bg:
             bg_roughness = randomize_background_material(scene, rng, cfg, bg[0].path)
         tex = registry.sample("textures", rng, n=1)
         tex = tex[0] if tex else None
         t_spread = cfg["scene"].get("target_spread", 0.5)
-        for obj in target_objs:
+        for obj in active_targets:
             randomize_object_transform(obj, rng, spread=t_spread,
                                        bounds_objs=BOUNDS_OBJS, randomize_scale=False)
-            randomize_material(obj, rng, cfg, texture_asset=tex)
-        for obj in distractor_objs:
+            randomize_material(obj, rng, cfg, texture_asset=None)  # targets have embedded textures
+        for obj in active_distractors:
             randomize_object_transform(obj, rng, bounds_objs=BOUNDS_OBJS, randomize_scale=False)
             randomize_material(obj, rng, cfg, texture_asset=tex)
 
-    # In debug mode, read light info from whatever is in the scene
+    # In debug mode, read light info from pool_light
     if args.debug:
-        for obj in scene.objects:
-            if obj.type == "LIGHT":
-                tgt = list(obj.get("target_loc", [0.0, 0.0, 0.0]))
-                # Fallback: look for a Spot_Target empty
-                if tgt == [0.0, 0.0, 0.0]:
-                    st = bpy.data.objects.get("Spot_Target")
-                    if st:
-                        tgt = [round(v, 8) for v in st.location]
-                light_info = {
-                    "Spot_Light_Location":    [round(v, 8) for v in obj.location],
-                    "Light_Target_Location":  tgt,
-                    "Spot_Light_Energy":      obj.data.energy,
-                    "Spot_Light_Temperature": obj.get("color_temp_K", 6500),
-                }
-                break
+        if pool_light:
+            tgt = list(pool_light.get("target_loc", [0.0, 0.0, 0.0]))
+            if tgt == [0.0, 0.0, 0.0]:
+                st = bpy.data.objects.get("Spot_Target")
+                if st:
+                    tgt = [round(v, 8) for v in st.location]
+            light_info = {
+                "Spot_Light_Location":    [round(v, 8) for v in pool_light.location],
+                "Light_Target_Location":  tgt,
+                "Spot_Light_Energy":      pool_light.data.energy,
+                "Spot_Light_Temperature": pool_light.get("color_temp_K", 6500),
+            }
         # Background roughness from scene
         bg_col = bpy.data.collections.get("Background")
         if bg_col:
@@ -151,50 +143,13 @@ for img_idx in range(args.start, end):
                      f"scale={round(obj.scale[0],3)} pass_index={obj.pass_index} "
                      f"hide_render={hide_render} cols={cols} col_hide_render={col_hide}")
 
-    # 3. Render — compositor writes RGB PNG + per-object mask PNGs
-    setup_compositor(scene, img_idx, output_dir, id_map)
+    # 3. Render — compositor writes RGB PNG + color instance mask PNG
+    setup_compositor(scene, img_idx, output_dir, id_map, inst_colors)
     render(scene)
     blend_path = str(output_dir / "blends" / f"{img_idx:04d}.blend")
     bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True)
 
-    # 4. Load masks (written by compositor)
-    H = cfg["render"]["resolution_y"]
-    W = cfg["render"]["resolution_x"]
-    instance_masks = load_instance_masks(img_idx, id_map, output_dir)
-    semantic_mask  = build_semantic_mask(instance_masks, category_map, H, W)
-
-    # 5. Save masks
-    save_semantic_mask(semantic_mask,
-                       output_dir / "masks" / f"{img_idx:04d}_semantic.png")
-    save_instance_color_mask(instance_masks, inst_colors,
-                             output_dir / "masks" / f"{img_idx:04d}_color.png",
-                             H, W)
-
-    # 6. COCO annotations (target objects only)
-    coco["images"].append({
-        "id":        img_idx,
-        "file_name": f"images/{img_idx:04d}_0001.png",
-        "width":     W,
-        "height":    H
-    })
-    for inst_id, mask in instance_masks.items():
-        polygons = mask_to_polygons(mask)
-        if not polygons:
-            continue
-        area = int(np.sum(mask > 0))
-        bbox = compute_bbox(mask)
-        coco["annotations"].append({
-            "id":           ann_id,
-            "image_id":     img_idx,
-            "category_id":  category_map.get(inst_id, 1),
-            "segmentation": polygons,
-            "area":         area,
-            "bbox":         bbox,
-            "iscrowd":      0
-        })
-        ann_id += 1
-
-    # 7. Per-image label JSON (KV format)
+    # 6. Per-image label JSON (KV format)
     label_objects = []
     for inst_id, name in id_map.items():
         obj   = bpy.data.objects[name]
@@ -205,7 +160,7 @@ for img_idx in range(args.start, end):
             "rotation":   [round(math.degrees(a), 8) for a in obj.rotation_euler],
             "mask_color": color,
         })
-    for obj in distractor_objs:
+    for obj in active_distractors:
         entry = {
             "name":     obj.name,
             "position": [round(v, 8) for v in obj.location],
@@ -227,11 +182,7 @@ for img_idx in range(args.start, end):
     write_label_json(label, output_dir / "labels" / f"{img_idx:04d}_label.json")
 
     elapsed = time.perf_counter() - t0
-    logging.info(f"img={img_idx:04d} | objects={len(target_objs)} | "
-                 f"distractors={len(distractor_objs)} | "
-                 f"annotations={ann_id} | time={elapsed:.1f}s")
+    logging.info(f"img={img_idx:04d} | objects={len(active_targets)} | "
+                 f"distractors={len(active_distractors)} | time={elapsed:.1f}s")
 
-# ── Write COCO JSON ──────────────────────────────────────────────────────────
-json_path = output_dir / "annotations" / f"instances_{args.start}_{end}.json"
-write_coco(coco, json_path)
-logging.info(f"Done. Wrote {json_path}")
+logging.info("Done.")

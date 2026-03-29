@@ -207,6 +207,69 @@ def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> dict:
     }
 
 
+def randomize_light_inplace(light_obj, rng: np.random.Generator, cfg: dict) -> dict:
+    """Randomize an existing SPOT light object in-place (no delete/create).
+
+    Same logic as randomize_lights() but operates on a pre-existing light_obj.
+    Returns the same dict format for label JSON compatibility.
+    """
+    lc = cfg["lighting"]
+
+    ktemp  = float(rng.uniform(lc["color_temp_min"], lc["color_temp_max"]))
+    energy = float(rng.uniform(lc["intensity_min"],  lc["intensity_max"]))
+
+    light_obj.data.energy    = energy
+    light_obj.data.color     = kelvin_to_rgb(ktemp)
+    light_obj.data.spot_size = float(rng.uniform(math.radians(30), math.radians(90)))
+    light_obj["color_temp_K"] = int(round(ktemp))
+
+    CAM_POS  = mathutils.Vector((2.87, 0.0, 0.0))
+    VIEW_DIR = mathutils.Vector((-1.0,  0.0, 0.0))
+    FOV_HALF = math.radians(32.0)
+    FALLBACK = mathutils.Vector((0.0, 3.5, 2.0))
+
+    r_min = lc.get("radius_min", 2.0)
+    r_max = lc.get("radius_max", 4.5)
+
+    light_pos = None
+    for _ in range(20):
+        r     = float(rng.uniform(r_min, r_max))
+        theta = float(rng.uniform(0.0, math.pi))
+        phi   = float(rng.uniform(0.0, 2.0 * math.pi))
+        candidate = mathutils.Vector((
+            r * math.sin(theta) * math.cos(phi),
+            r * math.sin(theta) * math.sin(phi),
+            r * math.cos(theta),
+        ))
+        to_light = (candidate - CAM_POS).normalized()
+        cos_a    = max(-1.0, min(1.0, to_light.dot(VIEW_DIR)))
+        if math.acos(cos_a) >= FOV_HALF:
+            light_pos = candidate
+            break
+    if light_pos is None:
+        light_pos = FALLBACK
+
+    light_obj.location.x = light_pos.x
+    light_obj.location.y = light_pos.y
+    light_obj.location.z = light_pos.z
+
+    target_loc = mathutils.Vector((
+        float(rng.uniform(0.3, 0.8)),
+        float(rng.uniform(-0.2, 0.2)),
+        0.0,
+    ))
+    direction = target_loc - light_obj.location
+    light_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    light_obj["target_loc"] = list(target_loc)
+
+    return {
+        "Spot_Light_Location":    [round(v, 8) for v in light_obj.location],
+        "Light_Target_Location":  [round(v, 8) for v in target_loc],
+        "Spot_Light_Energy":      energy,
+        "Spot_Light_Temperature": int(round(ktemp)),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Materials
 # ---------------------------------------------------------------------------

@@ -46,24 +46,27 @@ def enable_object_index_pass(view_layer) -> None:
     view_layer.use_pass_object_index = True
 
 
-def setup_compositor(scene, img_idx: int, output_dir: Path, id_map: dict) -> None:
+def setup_compositor(scene, img_idx: int, output_dir: Path, id_map: dict,
+                     inst_colors: dict) -> None:
     """Configure compositor output nodes for one frame.
 
     Creates:
       - One File Output node for the RGB PNG image
-      - One ID_MASK node + File Output slot per target object (binary mask PNGs)
+      - One File Output node for the color instance mask PNG (built entirely
+        in the compositor via ID_MASK → Multiply → Add chain; no Python file I/O)
 
     All outputs are written by the compositor when bpy.ops.render.render() runs.
 
     Args:
-        scene:      bpy.context.scene
-        img_idx:    0-based image index; zero-padded to 4 digits
-        output_dir: root output directory (Path); must be absolute
-        id_map:     {inst_id: obj_name} from assign_instance_ids()
+        scene:       bpy.context.scene
+        img_idx:     0-based image index; zero-padded to 4 digits
+        output_dir:  root output directory (Path); must be absolute
+        id_map:      {inst_id: obj_name} from assign_instance_ids()
+        inst_colors: {inst_id: (R, G, B)} uint8 colors from assign_instance_colors()
 
     Output files (Blender appends frame number suffix "_0001" automatically):
         output_dir/images/{img_idx:04d}_0001.png
-        output_dir/masks_instance/{img_idx:04d}_inst_{K}_0001.png  (one per inst_id K)
+        output_dir/masks/{img_idx:04d}_color_0001.png
     """
     scene.use_nodes = True
     scene.render.use_compositing = True  # compositor must execute during render
@@ -83,21 +86,40 @@ def setup_compositor(scene, img_idx: int, output_dir: Path, id_map: dict) -> Non
     if not id_map:
         return
 
-    # Per-object binary mask PNGs via ID_MASK nodes
-    mask_out = tree.nodes.new("CompositorNodeOutputFile")
-    mask_out.base_path = str(output_dir / "masks_instance")
-    mask_out.format.file_format = "PNG"
-    mask_out.format.color_mode = "BW"
-    # Remove the default slot; we add one per object below
-    mask_out.file_slots.clear()
-
+    # Color instance mask — built in compositor, no Python file I/O.
+    # For each instance: ID_MASK (0/1 float) × instance color → ADD all together.
+    accum = None
     for inst_id in sorted(id_map.keys()):
+        r, g, b = [c / 255.0 for c in inst_colors[inst_id]]
+
         id_mask = tree.nodes.new("CompositorNodeIDMask")
         id_mask.index = inst_id
         id_mask.use_antialiasing = False
         tree.links.new(rl.outputs["IndexOB"], id_mask.inputs["ID value"])
-        slot = mask_out.file_slots.new(f"{img_idx:04d}_inst_{inst_id}_")
-        tree.links.new(id_mask.outputs["Alpha"], mask_out.inputs[slot.name])
+
+        # Multiply mask (0 or 1) by instance color
+        mul = tree.nodes.new("CompositorNodeMixRGB")
+        mul.blend_type = 'MULTIPLY'
+        mul.inputs[0].default_value = 1.0
+        mul.inputs[2].default_value = (r, g, b, 1.0)
+        tree.links.new(id_mask.outputs["Alpha"], mul.inputs[1])
+
+        if accum is None:
+            accum = mul
+        else:
+            add = tree.nodes.new("CompositorNodeMixRGB")
+            add.blend_type = 'ADD'
+            add.inputs[0].default_value = 1.0
+            tree.links.new(accum.outputs[0], add.inputs[1])
+            tree.links.new(mul.outputs[0], add.inputs[2])
+            accum = add
+
+    color_out = tree.nodes.new("CompositorNodeOutputFile")
+    color_out.base_path = str(output_dir / "masks")
+    color_out.format.file_format = "PNG"
+    color_out.format.color_mode = "RGB"
+    color_out.file_slots[0].path = f"{img_idx:04d}_color_"
+    tree.links.new(accum.outputs[0], color_out.inputs[0])
 
 
 def render(scene) -> None:

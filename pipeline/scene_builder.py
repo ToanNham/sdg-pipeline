@@ -186,3 +186,136 @@ def assign_instance_ids(objects: list, start: int = 1) -> dict:
         obj.pass_index = inst_id  # required for IndexOB / ID_MASK compositor nodes
         id_map[inst_id] = obj.name
     return id_map
+
+
+# ---------------------------------------------------------------------------
+# Pool-based pre-spawn (fast rendering path)
+# ---------------------------------------------------------------------------
+
+def build_target_pool(registry, cfg: dict) -> dict:
+    """Pre-load all target models once; assign fixed pass_index; hide all.
+
+    Returns {model_stem: [list of bpy obj refs]} with pass_index 1..N assigned
+    permanently. Call once before the render loop.
+    """
+    per_class_max = cfg["scene"].get("per_class_max", 2)
+    pool = {}
+    next_id = 1
+
+    for asset in registry._pools["models"]:
+        stem = asset.path.stem
+        pool[stem] = []
+        for _ in range(per_class_max):
+            objs = import_model(asset.path, collection_name="Randomize")
+            for obj in objs:
+                obj.pass_index = next_id
+                obj["inst_id"] = next_id
+                obj["category_id"] = asset.category_id
+                obj["category_name"] = asset.category_name
+                obj.hide_render = True
+                obj.hide_viewport = True
+                next_id += 1
+            pool[stem].extend(objs)
+
+    col = bpy.data.collections.get("Randomize")
+    if col:
+        col.hide_render = False
+
+    return pool
+
+
+def build_distractor_pool(registry, cfg: dict) -> list:
+    """Pre-load all distractor mesh assets and primitives once; hide all.
+
+    Returns a flat list of all distractor bpy obj refs.
+    Call once before the render loop.
+    """
+    scene_cfg = cfg["scene"]
+    distractors_max = scene_cfg.get("distractors_max", 6)
+    prim_size = float(scene_cfg.get("distractor_primitive_size", 0.2))
+    half = prim_size / 2.0
+
+    pool = []
+
+    # Load each distractor mesh file once
+    for asset in registry._pools.get("distractors", []):
+        objs = import_model(asset.path, collection_name="Distractors")
+        for obj in objs:
+            obj["is_distractor"] = True
+            obj.hide_render = True
+            obj.hide_viewport = True
+        pool.extend(objs)
+
+    # Pre-spawn distractors_max primitives (deterministic type assignment)
+    _PRIMITIVE_OPS = [
+        lambda: bpy.ops.mesh.primitive_cube_add(size=prim_size),
+        lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=half),
+        lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half),
+        lambda: bpy.ops.mesh.primitive_cone_add(radius1=half),
+        lambda: bpy.ops.mesh.primitive_torus_add(major_radius=half, minor_radius=half * 0.3),
+    ]
+    occluders_col = bpy.data.collections.get("Occluders")
+    pool_rng = __import__("numpy").random.default_rng(0)
+    for _ in range(distractors_max):
+        before = set(bpy.data.objects)
+        _PRIMITIVE_OPS[int(pool_rng.integers(0, len(_PRIMITIVE_OPS)))]()
+        after = set(bpy.data.objects)
+        new_objs = [o for o in (after - before) if o.type == "MESH"]
+        for obj in new_objs:
+            obj["is_distractor"] = True
+            obj.hide_render = True
+            obj.hide_viewport = True
+            if occluders_col is not None:
+                for src_col in list(obj.users_collection):
+                    src_col.objects.unlink(obj)
+                occluders_col.objects.link(obj)
+        pool.extend(new_objs)
+
+    return pool
+
+
+def activate_frame_objects(target_pool: dict, distractor_pool: list,
+                            rng, cfg: dict) -> tuple:
+    """Hide all pooled objects, then activate a random subset for this frame.
+
+    Returns (active_targets, active_distractors, id_map) where
+    id_map = {pass_index: obj.name} for active targets only.
+    """
+    scene_cfg = cfg["scene"]
+    per_class_min = scene_cfg.get("per_class_min", 1)
+    per_class_max = scene_cfg.get("per_class_max", 2)
+    distractors_min = scene_cfg.get("distractors_min", 0)
+    distractors_max = scene_cfg.get("distractors_max", 6)
+
+    # Step 1: hide everything
+    for objs in target_pool.values():
+        for obj in objs:
+            obj.hide_render = True
+            obj.hide_viewport = True
+    for obj in distractor_pool:
+        obj.hide_render = True
+        obj.hide_viewport = True
+
+    # Step 2: activate targets
+    active_targets = []
+    for stem, objs in target_pool.items():
+        count = int(rng.integers(per_class_min, per_class_max + 1))
+        for obj in objs[:count]:
+            obj.hide_render = False
+            obj.hide_viewport = False
+            active_targets.append(obj)
+
+    # Step 3: activate distractors
+    n = int(rng.integers(distractors_min, distractors_max + 1))
+    shuffled = list(distractor_pool)
+    rng.shuffle(shuffled)
+    active_distractors = []
+    for obj in shuffled[:n]:
+        obj.hide_render = False
+        obj.hide_viewport = False
+        active_distractors.append(obj)
+
+    # Step 4: build id_map from active targets (permanent pass_index values)
+    id_map = {obj.pass_index: obj.name for obj in active_targets}
+
+    return active_targets, active_distractors, id_map
