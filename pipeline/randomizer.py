@@ -1,11 +1,9 @@
 import math
 from pathlib import Path
 
-import numpy as np
-
-import bpy       # module-level import is fine; do NOT call bpy.* at module level
+import bpy  # module-level import is fine; do NOT call bpy.* at module level
 import mathutils  # available in Blender's Python and standalone bpy==4.2.0
-
+import numpy as np
 
 _LIGHT_TYPES = ["POINT", "SUN", "AREA", "SPOT"]
 
@@ -352,10 +350,10 @@ def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> dict:
 
     # Position: sample on sphere of radius [radius_min, radius_max], reject if
     # inside the camera frustum cone (camera fixed at (2.87,0,0) looking at -X).
-    CAM_POS  = mathutils.Vector((2.87, 0.0, 0.0))
-    VIEW_DIR = mathutils.Vector((-1.0,  0.0, 0.0))
-    FOV_HALF = math.radians(32.0)   # 32° exclusion half-angle (covers 35mm FOV + margin)
-    FALLBACK = mathutils.Vector((0.0, 3.5, 2.0))  # guaranteed off-screen
+    cam_pos  = mathutils.Vector((2.87, 0.0, 0.0))
+    view_dir = mathutils.Vector((-1.0,  0.0, 0.0))
+    fov_half = math.radians(32.0)   # 32° exclusion half-angle (covers 35mm FOV + margin)
+    fallback = mathutils.Vector((0.0, 3.5, 2.0))  # guaranteed off-screen
 
     r_min = lc.get("radius_min", 2.0)
     r_max = lc.get("radius_max", 4.5)
@@ -370,13 +368,13 @@ def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> dict:
             r * math.sin(theta) * math.sin(phi),
             r * math.cos(theta),
         ))
-        to_light = (candidate - CAM_POS).normalized()
-        cos_a    = max(-1.0, min(1.0, to_light.dot(VIEW_DIR)))
-        if math.acos(cos_a) >= FOV_HALF:
+        to_light = (candidate - cam_pos).normalized()
+        cos_a    = max(-1.0, min(1.0, to_light.dot(view_dir)))
+        if math.acos(cos_a) >= fov_half:
             light_pos = candidate
             break
     if light_pos is None:
-        light_pos = FALLBACK
+        light_pos = fallback
 
     light_obj.location.x = light_pos.x
     light_obj.location.y = light_pos.y
@@ -416,10 +414,10 @@ def randomize_light_inplace(light_obj, rng: np.random.Generator, cfg: dict) -> d
     light_obj.data.spot_size = float(rng.uniform(math.radians(30), math.radians(90)))
     light_obj["color_temp_K"] = int(round(ktemp))
 
-    CAM_POS  = mathutils.Vector((2.87, 0.0, 0.0))
-    VIEW_DIR = mathutils.Vector((-1.0,  0.0, 0.0))
-    FOV_HALF = math.radians(32.0)
-    FALLBACK = mathutils.Vector((0.0, 3.5, 2.0))
+    cam_pos  = mathutils.Vector((2.87, 0.0, 0.0))
+    view_dir = mathutils.Vector((-1.0,  0.0, 0.0))
+    fov_half = math.radians(32.0)
+    fallback = mathutils.Vector((0.0, 3.5, 2.0))
 
     r_min = lc.get("radius_min", 2.0)
     r_max = lc.get("radius_max", 4.5)
@@ -434,13 +432,13 @@ def randomize_light_inplace(light_obj, rng: np.random.Generator, cfg: dict) -> d
             r * math.sin(theta) * math.sin(phi),
             r * math.cos(theta),
         ))
-        to_light = (candidate - CAM_POS).normalized()
-        cos_a    = max(-1.0, min(1.0, to_light.dot(VIEW_DIR)))
-        if math.acos(cos_a) >= FOV_HALF:
+        to_light = (candidate - cam_pos).normalized()
+        cos_a    = max(-1.0, min(1.0, to_light.dot(view_dir)))
+        if math.acos(cos_a) >= fov_half:
             light_pos = candidate
             break
     if light_pos is None:
-        light_pos = FALLBACK
+        light_pos = fallback
 
     light_obj.location.x = light_pos.x
     light_obj.location.y = light_pos.y

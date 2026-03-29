@@ -1,10 +1,10 @@
 import json
-import numpy as np
 from pathlib import Path
-from PIL import Image
-from skimage import measure
-from shapely.geometry import Polygon
 
+import numpy as np
+from PIL import Image
+from shapely.geometry import MultiPolygon, Polygon
+from skimage import measure
 
 # Distinct RGB colors for up to 20 instances (black = background).
 # Order matches the KV example palette (blues/greens/yellows/reds).
@@ -28,16 +28,16 @@ def assign_instance_colors(id_map: dict) -> dict:
 
 
 def save_instance_color_mask(instance_masks: dict, inst_colors: dict,
-                             path: Path, H: int, W: int) -> None:
+                             path: Path, height: int, width: int) -> None:
     """Save a single RGB PNG with each instance painted in its assigned color.
 
     Args:
         instance_masks: {inst_id: uint8 array (H, W)} — 255 = object pixel
         inst_colors:    {inst_id: (R, G, B)} from assign_instance_colors()
         path:           output file path
-        H, W:           image height and width
+        height, width:  image dimensions
     """
-    canvas = np.zeros((H, W, 3), dtype=np.uint8)
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
     for inst_id, mask in instance_masks.items():
         color = inst_colors.get(inst_id, (255, 255, 255))
         canvas[mask > 0] = color
@@ -67,8 +67,13 @@ def mask_to_polygons(binary_mask: np.ndarray, tolerance: int = 2) -> list:
         if len(contour) < 3:
             continue
         poly = Polygon(contour).simplify(tolerance, preserve_topology=False)
-        if poly.is_valid and not poly.is_empty and poly.area > 1:
-            coords = list(poly.exterior.coords)
+        if not poly.is_valid or poly.is_empty or poly.area <= 1:
+            continue
+        parts = poly.geoms if isinstance(poly, MultiPolygon) else [poly]
+        for part in parts:
+            if part.area <= 1:
+                continue
+            coords = list(part.exterior.coords)
             flat   = [v for pt in coords for v in pt]
             polygons.append(flat)
     return polygons
@@ -81,7 +86,7 @@ def compute_bbox(binary_mask: np.ndarray) -> list:
         return [0, 0, 0, 0]
     rmin, rmax = np.where(rows)[0][[0, -1]]
     cmin, cmax = np.where(cols)[0][[0, -1]]
-    return [int(cmin), int(rmin), int(cmax - cmin), int(rmax - rmin)]
+    return [int(cmin), int(rmin), int(cmax - cmin + 1), int(rmax - rmin + 1)]
 
 
 def init_coco(cfg) -> dict:
@@ -119,16 +124,60 @@ class AnnotationWriter:
     to write formats (e.g. COCO JSON) that span all frames.
     """
 
+    def __init__(self, cfg=None):
+        self._coco   = init_coco(cfg) if cfg is not None else None
+        self._ann_id = 1
+
     def assign_colors(self, id_map):
         return assign_instance_colors(id_map)
 
     def write_label(self, label, path):
         write_label_json(label, path)
 
+    def add_coco_image_and_annotations(self, img_idx, id_map, category_map,
+                                       binary_masks, render_cfg):
+        """Accumulate one image + per-instance annotations into the COCO dict.
+
+        Args:
+            img_idx:      0-based image index
+            id_map:       {inst_id: obj_name}
+            category_map: {inst_id: category_id}
+            binary_masks: {inst_id: uint8 ndarray (H, W), 255=object pixel}
+            render_cfg:   cfg["render"] dict (for resolution)
+        """
+        if self._coco is None:
+            return
+        img_w = render_cfg.get("resolution_x", 640)
+        img_h = render_cfg.get("resolution_y", 640)
+        self._coco["images"].append({
+            "id":        img_idx,
+            "file_name": f"{img_idx:04d}_0001.png",
+            "width":     img_w,
+            "height":    img_h,
+        })
+        for inst_id, binary_mask in binary_masks.items():
+            cat_id = category_map.get(inst_id, 1)
+            bbox   = compute_bbox(binary_mask)
+            if bbox[2] == 0 or bbox[3] == 0:
+                continue
+            polygons = mask_to_polygons(binary_mask)
+            area     = int(np.count_nonzero(binary_mask))
+            self._coco["annotations"].append({
+                "id":          self._ann_id,
+                "image_id":    img_idx,
+                "category_id": cat_id,
+                "bbox":        bbox,
+                "segmentation": polygons,
+                "area":        area,
+                "iscrowd":     0,
+            })
+            self._ann_id += 1
+
     def finalize(self, output_dir):
         """Called once after all frames are rendered.
 
-        Override this to write multi-frame output (e.g. a merged COCO JSON).
-        Default implementation does nothing.
+        Writes COCO JSON when a cfg was supplied at construction time.
+        Override this to write additional multi-frame output formats.
         """
-        pass
+        if self._coco is not None:
+            write_coco(self._coco, Path(output_dir) / "annotations" / "instances.json")

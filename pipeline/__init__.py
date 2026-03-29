@@ -1,4 +1,4 @@
-from .pipeline         import SDGPipeline
-from .randomizer       import Randomizer
-from .renderer         import Renderer
-from .annotation_writer import AnnotationWriter
+from .annotation_writer import AnnotationWriter as AnnotationWriter
+from .pipeline import SDGPipeline as SDGPipeline
+from .randomizer import Randomizer as Randomizer
+from .renderer import Renderer as Renderer

@@ -5,7 +5,6 @@ from pathlib import Path
 import bpy  # module-level import is fine; do NOT call bpy.* at module level
 import mathutils
 
-
 # ---------------------------------------------------------------------------
 # Group arrangement
 # ---------------------------------------------------------------------------
@@ -215,7 +214,7 @@ def spawn_distractors(registry, rng, cfg) -> list:
     n_prim = max(0, n - len(mesh_assets)) if use_primitives else 0
     prim_size = float(cfg["scene"].get("distractor_primitive_size", 0.2))
     half = prim_size / 2.0
-    _PRIMITIVE_OPS = [
+    primitive_ops = [
         lambda: bpy.ops.mesh.primitive_cube_add(size=prim_size),
         lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=half),
         lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half, depth=prim_size),
@@ -225,7 +224,7 @@ def spawn_distractors(registry, rng, cfg) -> list:
     occluders_col = bpy.data.collections.get("Occluders")
     for _ in range(n_prim):
         before = set(bpy.data.objects)
-        _PRIMITIVE_OPS[int(rng.integers(0, len(_PRIMITIVE_OPS)))]()
+        primitive_ops[int(rng.integers(0, len(primitive_ops)))]()
         after = set(bpy.data.objects)
         new_objs = [o for o in (after - before) if o.type == 'MESH']
         for obj in new_objs:
@@ -350,7 +349,7 @@ def build_distractor_pool(registry, cfg: dict) -> list:
         pool.extend(objs)
 
     # Pre-spawn distractors_max primitives (deterministic type assignment)
-    _PRIMITIVE_OPS = [
+    primitive_ops = [
         lambda: bpy.ops.mesh.primitive_cube_add(size=prim_size),
         lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=half),
         lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half, depth=prim_size),
@@ -361,7 +360,7 @@ def build_distractor_pool(registry, cfg: dict) -> list:
     pool_rng = __import__("numpy").random.default_rng(0)
     for _ in range(distractors_max):
         before = set(bpy.data.objects)
-        _PRIMITIVE_OPS[int(pool_rng.integers(0, len(_PRIMITIVE_OPS)))]()
+        primitive_ops[int(pool_rng.integers(0, len(primitive_ops)))]()
         after = set(bpy.data.objects)
         new_objs = [o for o in (after - before) if o.type == "MESH"]
         for obj in new_objs:
@@ -402,7 +401,7 @@ def activate_frame_objects(target_pool: dict, distractor_pool: list,
     # Step 2: activate targets
     active_targets = []
     class_appear_prob = float(scene_cfg.get("class_appearance_probability", 1.0))
-    for stem, objs in target_pool.items():
+    for _stem, objs in target_pool.items():
         if float(rng.random()) > class_appear_prob:
             continue
         count = int(rng.integers(per_class_min, per_class_max + 1))

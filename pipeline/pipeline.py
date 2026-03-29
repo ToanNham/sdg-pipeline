@@ -40,15 +40,15 @@ class SDGPipeline:
 
     def __init__(self, cfg, output_dir, *,
                  randomizer=None, renderer=None, annotation_writer=None):
-        from pipeline.randomizer        import Randomizer
-        from pipeline.renderer          import Renderer
         from pipeline.annotation_writer import AnnotationWriter
+        from pipeline.randomizer import Randomizer
+        from pipeline.renderer import Renderer
 
         self.cfg              = cfg
         self.output_dir       = Path(output_dir)
         self.randomizer       = randomizer       or Randomizer()
         self.renderer         = renderer         or Renderer()
-        self.annotation_writer = annotation_writer or AnnotationWriter()
+        self.annotation_writer = annotation_writer or AnnotationWriter(cfg)
 
         # Populated during run(); None until then.
         self._scene             = None
@@ -74,14 +74,15 @@ class SDGPipeline:
                    all randomization — matches the --debug flag in run.py.
         """
         import bpy
+
         from pipeline.asset_registry import AssetRegistry
-        from pipeline.scene_builder  import build_target_pool, build_distractor_pool
+        from pipeline.scene_builder import build_distractor_pool, build_target_pool
 
         cfg        = self.cfg
         output_dir = self.output_dir
 
         # ── Output directories ──────────────────────────────────────────
-        dirs = ["images", "masks", "labels"]
+        dirs = ["images", "masks", "masks_instance", "masks_semantic", "labels", "annotations"]
         if cfg.get("render", {}).get("save_blends", False):
             dirs.append("blends")
         for d in dirs:
@@ -144,11 +145,12 @@ class SDGPipeline:
 
     def _run_frame(self, img_idx: int, debug: bool = False) -> None:
         import bpy
+
         from pipeline.scene_builder import (
-            set_background,
             activate_frame_objects,
             activate_frame_objects_with_groups,
             destroy_group,
+            set_background,
         )
 
         cfg        = self.cfg
@@ -176,7 +178,7 @@ class SDGPipeline:
         if bg:
             set_background(bg[0].path)
 
-        category_map = {pid: self._static_category_map[pid] for pid in id_map}  # noqa: F841
+        category_map = {pid: self._static_category_map[pid] for pid in id_map}
         inst_colors  = self.annotation_writer.assign_colors(id_map)
 
         # 2. Randomize (skipped in --debug mode)
@@ -307,7 +309,36 @@ class SDGPipeline:
             blend_path = str(output_dir / "blends" / f"{img_idx:04d}.blend")
             bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True)
 
-        # 4. Per-image label JSON (KV format) — read world transforms while groups still exist
+        # 4. Extract binary instance masks + semantic mask from color mask PNG
+        from PIL import Image as _PILImage
+
+        from pipeline.annotation_writer import save_instance_mask, save_semantic_mask
+
+        color_mask_path = output_dir / "masks" / f"{img_idx:04d}_color_0001.png"
+        if color_mask_path.exists() and id_map:
+            color_arr = np.array(_PILImage.open(str(color_mask_path)).convert("RGB"))
+            h_px, w_px = color_arr.shape[:2]
+            semantic    = np.zeros((h_px, w_px), dtype=np.uint8)
+            binary_masks = {}
+            for inst_id in id_map:
+                ir, ig, ib = inst_colors[inst_id]
+                match  = (
+                    (color_arr[:, :, 0] == ir) &
+                    (color_arr[:, :, 1] == ig) &
+                    (color_arr[:, :, 2] == ib)
+                )
+                binary = (match * 255).astype(np.uint8)
+                binary_masks[inst_id] = binary
+                save_instance_mask(binary,
+                    output_dir / "masks_instance" / f"{img_idx:04d}_inst_{inst_id}_0001.png")
+                cat_id = category_map.get(inst_id, 1)
+                semantic[match] = cat_id
+            save_semantic_mask(semantic,
+                output_dir / "masks_semantic" / f"{img_idx:04d}.png")
+            self.annotation_writer.add_coco_image_and_annotations(
+                img_idx, id_map, category_map, binary_masks, cfg.get("render", {}))
+
+        # 5. Per-image label JSON (KV format) — read world transforms while groups still exist
         label_objects = []
         for inst_id, name in id_map.items():
             obj   = bpy.data.objects[name]
