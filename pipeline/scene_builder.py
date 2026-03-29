@@ -387,7 +387,10 @@ def activate_frame_objects(target_pool: dict, distractor_pool: list,
 
     # Step 2: activate targets
     active_targets = []
+    class_appear_prob = float(scene_cfg.get("class_appearance_probability", 1.0))
     for stem, objs in target_pool.items():
+        if float(rng.random()) > class_appear_prob:
+            continue
         count = int(rng.integers(per_class_min, per_class_max + 1))
         for obj in objs[:count]:
             obj.hide_render = False
@@ -458,7 +461,10 @@ def activate_frame_objects_with_groups(
     active_groups: list = []
     all_group_members: list = []
 
+    class_appear_prob = float(scene_cfg.get("class_appearance_probability", 1.0))
     for stem, objs in target_pool.items():
+        if float(rng.random()) > class_appear_prob:
+            continue
         available = list(objs)  # all hidden; we pick from them in order
 
         if arr_enabled and float(rng.random()) < group_prob:

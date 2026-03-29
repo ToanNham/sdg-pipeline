@@ -30,6 +30,7 @@ scene:
   target_rotation_y_max: 115      # degrees
   target_rotation_z_min: -24      # degrees
   target_rotation_z_max: 24       # degrees
+  class_appearance_probability: 0.6  # chance each model class spawns per image (~17 objects avg with 6 classes)
 
   arrangements:
     enabled: true
