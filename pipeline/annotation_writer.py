@@ -105,3 +105,30 @@ def write_coco(coco: dict, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(str(path), "w") as f:
         json.dump(coco, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Extensibility wrapper
+# ---------------------------------------------------------------------------
+
+class AnnotationWriter:
+    """Thin wrapper around module-level annotation functions.
+
+    Subclass and override individual methods to customise annotation output
+    without touching any other part of the pipeline.  Override ``finalize``
+    to write formats (e.g. COCO JSON) that span all frames.
+    """
+
+    def assign_colors(self, id_map):
+        return assign_instance_colors(id_map)
+
+    def write_label(self, label, path):
+        write_label_json(label, path)
+
+    def finalize(self, output_dir):
+        """Called once after all frames are rendered.
+
+        Override this to write multi-frame output (e.g. a merged COCO JSON).
+        Default implementation does nothing.
+        """
+        pass

@@ -724,8 +724,7 @@ for img_idx in range(args.start, end):
     category_map = {iid: bpy.data.objects[name].get("category_id", 1)
                     for iid, name in id_map.items()}
 
-    # 2. Randomize
-    randomize_camera(cam_obj, rng, cfg)
+    # 2. Randomize (camera is intentionally static — not randomized)
     randomize_lights(scene, rng, cfg)
     tex = registry.sample("textures", rng, n=1)
     tex = tex[0] if tex else None

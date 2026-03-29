@@ -81,7 +81,10 @@ class SDGPipeline:
         output_dir = self.output_dir
 
         # ── Output directories ──────────────────────────────────────────
-        for d in ("images", "masks", "labels", "blends"):
+        dirs = ["images", "masks", "labels"]
+        if cfg.get("render", {}).get("save_blends", False):
+            dirs.append("blends")
+        for d in dirs:
             (output_dir / d).mkdir(parents=True, exist_ok=True)
 
         # ── Logging ─────────────────────────────────────────────────────
@@ -96,6 +99,11 @@ class SDGPipeline:
 
         # ── One-time Blender setup ───────────────────────────────────────
         self._scene     = bpy.context.scene
+
+        # Prevent Blender from auto-saving during long batch runs.
+        # Default is True; after ~2 min it writes <PID>.blend to the temp dir
+        # (or cwd if temp is unset), polluting the project during batch runs.
+        bpy.context.preferences.filepaths.use_auto_save_temporary_files = False
         view_layer      = self._scene.view_layers[0]
         self._registry  = AssetRegistry.from_config(cfg)
 
