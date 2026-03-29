@@ -7,15 +7,12 @@
     "include": [
         "pipeline",
         "run.py",
-        "merge_coco.py",
-        "validate_output.py",
-        "visualize.py"
+        "scripts"
     ],
     "exclude": [
         "**/__pycache__",
         "output",
-        "assets",
-        "scripts"
+        "assets"
     ],
     "reportMissingImports": "warning",
     "reportMissingModuleSource": "warning",

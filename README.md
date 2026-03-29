@@ -1,5 +1,9 @@
 # SDG Pipeline
 
+A synthetic data generation pipeline that runs in **Blender 4.2 LTS headless mode**: loads `.glb` product models, randomizes scenes, renders RGB images, extracts per-instance segmentation masks via the Object Index pass, and writes COCO JSON annotations. Designed for the KV Challenge (RevolutionUC 2026).
+
+---
+
 ## Requirements
 
 - **Blender 4.2 LTS** — [download](https://www.blender.org/download/lts/4-2/) (exact version; other versions untested)
@@ -69,7 +73,7 @@ BLENDER=/path/to/blender-4.2/blender ./scripts/render_parallel.sh 2000 4
 
 Visualize one rendered image with mask overlays and bounding boxes:
 ```bash
-python visualize.py --output_dir output --idx 0
+python scripts/visualize.py --output_dir output --idx 0
 # Saves output/inspect_0000.png
 ```
 
@@ -335,7 +339,8 @@ Distractor count controlled by `scene.distractors_min/max`.
 
 `base_scene.blend` is derived from the KV example datagen scene. To regenerate:
 ```bash
-C:/Users/nhamd/miniconda3/envs/sdg-pipeline/python.exe scripts/setup_base_scene.py
+# Using the conda dev environment:
+conda run -n sdg-pipeline python scripts/setup_base_scene.py
 ```
 This strips product objects from `KV example datagen.blend`, enables the Object Index pass, and saves as `base_scene.blend`.
 

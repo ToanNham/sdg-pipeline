@@ -1,3 +1,11 @@
+"""Tests for pipeline/scene_builder.py — must run inside Blender (uses bpy).
+
+Run:
+    blender -b base_scene.blend -P scripts/test_scene.py
+
+Tests: clear_scene, add_shadow_catcher, set_background, import_model,
+assign_instance_ids, spawn_targets, spawn_distractors.
+"""
 import sys
 sys.path.insert(0, ".")
 

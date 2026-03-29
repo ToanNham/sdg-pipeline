@@ -4,8 +4,8 @@ Opens "KV example datagen.blend", strips the product-specific objects and
 occluder primitives, configures Cycles + Object Index pass, rebuilds the
 compositor with a simple preview node, and saves as base_scene.blend.
 
-Run:
-    C:/Users/nhamd/miniconda3/envs/sdg-pipeline/python.exe scripts/setup_base_scene.py
+Run (conda dev environment):
+    conda run -n sdg-pipeline python scripts/setup_base_scene.py
 """
 
 import math

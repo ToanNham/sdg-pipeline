@@ -1,3 +1,11 @@
+"""Tests for pipeline/randomizer.py — must run inside Blender (uses bpy).
+
+Run:
+    blender -b base_scene.blend -P scripts/test_randomizer.py
+
+Tests: kelvin_to_rgb, randomize_camera, randomize_object_transform,
+randomize_lights, _apply_texture_set, randomize_material.
+"""
 import sys
 sys.path.insert(0, ".")
 

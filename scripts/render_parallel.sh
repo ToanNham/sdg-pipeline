@@ -40,5 +40,5 @@ done
 
 wait
 echo "All jobs done. Merging COCO annotations..."
-python merge_coco.py output/annotations --out instances.json
-python validate_output.py --output_dir output --config $CONFIG
+python scripts/merge_coco.py output/annotations --out instances.json
+python scripts/validate_output.py --output_dir output --config $CONFIG
