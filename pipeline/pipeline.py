@@ -307,13 +307,6 @@ class SDGPipeline:
             blend_path = str(output_dir / "blends" / f"{img_idx:04d}.blend")
             bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True)
 
-        # Build group membership lookup and capture world transforms BEFORE teardown.
-        # (After destroy_group the children are reset to origin, so read positions now.)
-        group_id_by_name = {}
-        for g_idx, group in enumerate(active_groups):
-            for obj in group.members:
-                group_id_by_name[obj.name] = g_idx
-
         # 4. Per-image label JSON (KV format) — read world transforms while groups still exist
         label_objects = []
         for inst_id, name in id_map.items():
@@ -326,9 +319,6 @@ class SDGPipeline:
                 "rotation":   [round(math.degrees(a), 8) for a in obj.matrix_world.to_euler()],
                 "mask_color": color,
             }
-            g_id = group_id_by_name.get(name)
-            if g_id is not None:
-                entry["group_id"] = g_id
             label_objects.append(entry)
 
         # Tear down groups after reading positions (restores children to hidden/unparented)

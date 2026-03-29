@@ -147,6 +147,15 @@ def import_model(path: Path, collection_name: str = None) -> list:
         bpy.context.view_layer.objects.active = new_objs[0]
         bpy.ops.object.make_single_user(type='SELECTED_OBJECTS', object=False, obdata=True)
         bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+
+        # GLBs may contain multiple sub-mesh objects (e.g. "cans", "wrap").
+        # Join them into one object so each import produces exactly one target,
+        # then rename to the file stem (e.g. "CocaCola") to match the label format.
+        if len(new_objs) > 1:
+            bpy.ops.object.join()  # merges all selected into the active object
+            new_objs = [bpy.context.view_layer.objects.active]
+        new_objs[0].name = path.stem
+
         bpy.ops.object.select_all(action='DESELECT')
 
     if collection_name:
