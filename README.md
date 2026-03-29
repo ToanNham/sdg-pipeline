@@ -11,7 +11,7 @@ A synthetic data generation pipeline that runs in **Blender 4.2 LTS headless mod
 - **GPU:** NVIDIA with 6 GB+ VRAM recommended; CPU fallback supported (`render.device: CPU`)
 - **RAM:** 8 GB minimum, 16 GB recommended
 - **Disk:** ~2 GB per 1,000 images at 1080×1080
-- **OS:** Windows 10+, Ubuntu 20.04+, macOS 12+ (Apple Silicon supported)
+- **OS:** Windows 10+, macOS 12+ (Apple Silicon supported)
 
 ---
 
@@ -23,48 +23,36 @@ A synthetic data generation pipeline that runs in **Blender 4.2 LTS headless mod
    # Edit BLENDER_PY path in the script first, then:
    ./scripts/install_deps.sh
    ```
-   On Windows, run this in Git Bash or WSL. See the script for platform-specific path examples.
+   Run this in Git Bash. Edit the `BLENDER_PY` variable at the top of the script to point to your Blender's bundled Python.
 3. **Add your `.glb` model** to `assets/models/`
 4. **Add background images** to `assets/backgrounds/`
 5. **Edit `config.yaml`** — set `category_name`, `num_images`
 6. **Run the pipeline:**
-   ```bash
-   # Linux / macOS
-   ./run.sh --config config.yaml
-
-   # Windows
+   ```bat
    run.bat --config config.yaml
    ```
-   Both wrappers respect a `BLENDER` env var if Blender isn't on your PATH:
-   ```bash
-   BLENDER="/path/to/blender-4.2/blender" ./run.sh --config config.yaml
+   Set `BLENDER` if Blender isn't on your PATH:
+   ```bat
+   set BLENDER=C:\path\to\blender-4.2\blender.exe && run.bat --config config.yaml
    ```
    For a quick smoke test (1 image, no randomization):
-   ```bash
-   ./run.sh --debug --config config.yaml
+   ```bat
+   run.bat --debug --config config.yaml
    ```
 7. **Output** in `output/images/`, `output/masks/`, `output/annotations/`
 
 ---
 
-## Example Configs
-
-| Config | Purpose |
-|--------|---------|
-| `examples/minimal_test.yaml` | 5 images, CPU, 8 samples — smoke test without a GPU |
-| `examples/multi_category.yaml` | 200 images, 2 object categories, GPU |
-
----
-
 ## Generating 2,000 Images (Multi-GPU)
 
+Run in Git Bash:
 ```bash
 ./scripts/render_parallel.sh 2000 4
 ```
 
 Set `BLENDER` if needed:
 ```bash
-BLENDER=/path/to/blender-4.2/blender ./scripts/render_parallel.sh 2000 4
+BLENDER="C:/path/to/blender-4.2/blender.exe" ./scripts/render_parallel.sh 2000 4
 ```
 
 ---
@@ -156,7 +144,7 @@ SDGPipeline(cfg, Path("output"), annotation_writer=CocoWriter(cfg)).run()
 ### Use a pre-existing pipeline instance from a script inside Blender
 
 ```python
-# custom_run.py — invoke via: blender -b base_scene.blend -P custom_run.py -- --config config.yaml
+# custom_run.py — invoke via: blender.exe -b base_scene.blend -P custom_run.py -- --config config.yaml
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
