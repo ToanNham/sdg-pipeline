@@ -1,6 +1,87 @@
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import bpy  # module-level import is fine; do NOT call bpy.* at module level
+import mathutils
+
+
+# ---------------------------------------------------------------------------
+# Group arrangement
+# ---------------------------------------------------------------------------
+
+@dataclass
+class GroupArrangement:
+    """A rigid group of objects parented to a single Empty pivot."""
+    pivot:   object        # bpy Empty (the parent object)
+    members: list          # list of bpy MESH objects (children)
+    rows:    int
+    cols:    int
+    stem:    str           # model class — all members from same class
+
+
+def create_group_pivot(name: str, collection_name: str = "Randomize"):
+    """Create a named Empty object and link it to collection_name.
+
+    Uses bpy.data (no bpy.ops) so it is safe in headless mode.
+    """
+    pivot = bpy.data.objects.new(name, None)   # None object_data = Empty
+    pivot.empty_display_type = "PLAIN_AXES"
+    pivot.empty_display_size = 0.05
+    col = bpy.data.collections.get(collection_name)
+    if col is not None:
+        col.objects.link(pivot)
+    return pivot
+
+
+def parent_to_pivot(child, pivot) -> None:
+    """Parent child to pivot without changing child's world position.
+
+    Direct attribute assignment — no bpy.ops, safe in headless mode.
+    """
+    child.parent = pivot
+    child.matrix_parent_inverse = pivot.matrix_world.inverted()
+
+
+def layout_group_local(
+    members: list, rows: int, cols: int,
+    spacing_x: float, spacing_y: float = None,
+) -> None:
+    """Place each member at a grid offset in the pivot's local space.
+
+    The grid is centered on the pivot origin.  Call after parent_to_pivot so
+    that matrix_local encodes the grid offset relative to the pivot.
+    spacing_x / spacing_y are the center-to-center distances per axis.
+    Pass the object's bbox dimension (+ optional gap) to get flush packing.
+    """
+    if spacing_y is None:
+        spacing_y = spacing_x
+    offset_x = -(cols - 1) / 2.0 * spacing_x
+    offset_y = -(rows - 1) / 2.0 * spacing_y
+    for idx, obj in enumerate(members):
+        r = idx // cols
+        c = idx % cols
+        obj.matrix_local = mathutils.Matrix.Translation((
+            offset_x + c * spacing_x,
+            offset_y + r * spacing_y,
+            0.0,
+        ))
+
+
+def destroy_group(group: GroupArrangement) -> None:
+    """Restore group members to un-parented state and delete the pivot.
+
+    Call after render, before the next frame's activation.
+    """
+    for child in group.members:
+        child.parent = None
+        child.matrix_world = mathutils.Matrix()
+        child.hide_render = True
+        child.hide_viewport = True
+    col = bpy.data.collections.get("Randomize")
+    if col is not None and group.pivot.name in col.objects:
+        col.objects.unlink(group.pivot)
+    bpy.data.objects.remove(group.pivot, do_unlink=True)
 
 
 # ---------------------------------------------------------------------------
@@ -319,3 +400,121 @@ def activate_frame_objects(target_pool: dict, distractor_pool: list,
     id_map = {obj.pass_index: obj.name for obj in active_targets}
 
     return active_targets, active_distractors, id_map
+
+
+def activate_frame_objects_with_groups(
+    target_pool: dict,
+    distractor_pool: list,
+    rng,
+    cfg: dict,
+    frame_idx: int = 0,
+) -> tuple:
+    """Hide all pooled objects, then activate a random subset with group support.
+
+    Returns (solo_targets, active_groups, active_distractors, id_map) where:
+      solo_targets  — list of ungrouped bpy.Object
+      active_groups — list of GroupArrangement
+      active_distractors — list of bpy.Object
+      id_map        — {pass_index: obj.name} flat dict covering all targets
+    """
+    scene_cfg = cfg["scene"]
+    per_class_min = scene_cfg.get("per_class_min", 1)
+    per_class_max = scene_cfg.get("per_class_max", 2)
+    distractors_min = scene_cfg.get("distractors_min", 0)
+    distractors_max = scene_cfg.get("distractors_max", 6)
+
+    arr_cfg = scene_cfg.get("arrangements", {})
+    arr_enabled = arr_cfg.get("enabled", False)
+    group_prob = float(arr_cfg.get("group_probability", 0.5))
+    raw_grids = arr_cfg.get("grid_sizes", [[1, 1, 1]])
+    cell_gap = float(arr_cfg.get("cell_spacing", 0.0))  # extra gap beyond flush contact
+
+    # Parse grid_sizes into (rows, cols, weight) tuples
+    grid_defs = []
+    for entry in raw_grids:
+        r, c, w = int(entry[0]), int(entry[1]), float(entry[2])
+        grid_defs.append((r, c, w))
+    total_weight = sum(w for _, _, w in grid_defs)
+
+    # Step 1: hide everything
+    for objs in target_pool.values():
+        for obj in objs:
+            obj.hide_render = True
+            obj.hide_viewport = True
+    for obj in distractor_pool:
+        obj.hide_render = True
+        obj.hide_viewport = True
+
+    # Step 2: activate targets
+    solo_targets: list = []
+    active_groups: list = []
+    all_group_members: list = []
+
+    for stem, objs in target_pool.items():
+        available = list(objs)  # all hidden; we pick from them in order
+
+        if arr_enabled and float(rng.random()) < group_prob:
+            # Choose grid size by weight
+            spin = float(rng.random()) * total_weight
+            rows, cols, _ = grid_defs[-1]
+            cumulative = 0.0
+            for r, c, w in grid_defs:
+                cumulative += w
+                if spin <= cumulative:
+                    rows, cols = r, c
+                    break
+
+            needed = rows * cols
+
+            # Fallback: downgrade grid until it fits the pool
+            while needed > len(available) and (rows > 1 or cols > 1):
+                rows = max(1, rows - 1)
+                cols = max(1, cols - 1)
+                needed = rows * cols
+                logging.warning(
+                    f"arrangements: pool for '{stem}' has only {len(available)} objects; "
+                    f"downgraded grid to {rows}x{cols}"
+                )
+
+            chosen = available[:needed]
+            for obj in chosen:
+                obj.hide_render = False
+                obj.hide_viewport = False
+
+            pivot = create_group_pivot(f"GroupPivot_{stem}_{frame_idx}", "Randomize")
+            for obj in chosen:
+                parent_to_pivot(obj, pivot)
+            # Derive flush spacing from the first member's bounding box dimensions.
+            # obj.dimensions = bbox size × scale; available without view_layer.update().
+            dim = chosen[0].dimensions
+            spacing_x = dim.x + cell_gap
+            spacing_y = dim.y + cell_gap
+            layout_group_local(chosen, rows, cols, spacing_x, spacing_y)
+
+            active_groups.append(GroupArrangement(
+                pivot=pivot, members=chosen, rows=rows, cols=cols, stem=stem
+            ))
+            all_group_members.extend(chosen)
+        else:
+            # Solo path: activate per_class_min..per_class_max objects
+            count = int(rng.integers(per_class_min, per_class_max + 1))
+            for obj in available[:count]:
+                obj.hide_render = False
+                obj.hide_viewport = False
+                solo_targets.append(obj)
+
+    # Step 3: activate distractors (unchanged)
+    n = int(rng.integers(distractors_min, distractors_max + 1))
+    shuffled = list(distractor_pool)
+    rng.shuffle(shuffled)
+    active_distractors = []
+    for obj in shuffled[:n]:
+        obj.hide_render = False
+        obj.hide_viewport = False
+        active_distractors.append(obj)
+
+    # Step 4: flat id_map covering all active targets
+    all_targets = solo_targets + all_group_members
+    id_map = {obj.pass_index: obj.name for obj in all_targets}
+
+    return solo_targets, active_groups, active_distractors, id_map

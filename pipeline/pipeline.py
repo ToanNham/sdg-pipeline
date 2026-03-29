@@ -136,7 +136,12 @@ class SDGPipeline:
 
     def _run_frame(self, img_idx: int, debug: bool = False) -> None:
         import bpy
-        from pipeline.scene_builder import set_background, activate_frame_objects
+        from pipeline.scene_builder import (
+            set_background,
+            activate_frame_objects,
+            activate_frame_objects_with_groups,
+            destroy_group,
+        )
 
         cfg        = self.cfg
         output_dir = self.output_dir
@@ -146,9 +151,19 @@ class SDGPipeline:
         rng = np.random.default_rng(cfg["seed"] + img_idx)
 
         # 1. Scene — activate objects for this frame
-        active_targets, active_distractors, id_map = activate_frame_objects(
-            self._target_pool, self._distractor_pool, rng, cfg
-        )
+        arr_enabled = cfg["scene"].get("arrangements", {}).get("enabled", False)
+        if arr_enabled:
+            solo_targets, active_groups, active_distractors, id_map = (
+                activate_frame_objects_with_groups(
+                    self._target_pool, self._distractor_pool, rng, cfg, frame_idx=img_idx
+                )
+            )
+            active_targets = solo_targets + [obj for g in active_groups for obj in g.members]
+        else:
+            active_targets, active_distractors, id_map = activate_frame_objects(
+                self._target_pool, self._distractor_pool, rng, cfg
+            )
+            solo_targets, active_groups = active_targets, []
         bg = self._registry.sample("backgrounds", rng, n=1)
         if bg:
             set_background(bg[0].path)
@@ -183,7 +198,28 @@ class SDGPipeline:
             rot_z_max   = cfg["scene"].get("target_rotation_z_max", None)
             placed_aabbs: list = []
 
-            for obj in active_targets:
+            arr_cfg = cfg["scene"].get("arrangements", {})
+
+            # Place groups first (as rigid units), then solo targets
+            for group in active_groups:
+                self.randomizer.place_group(
+                    group, rng, placed_aabbs,
+                    spread=t_spread,
+                    bounds_objs=self._BOUNDS_OBJS,
+                    max_retries=arr_cfg.get("group_placement_retries", 15),
+                    margin=margin,
+                    rotation_x_min=rot_x_min,
+                    rotation_x_max=rot_x_max,
+                    rotation_y_min=rot_y_min,
+                    rotation_y_max=rot_y_max,
+                    rotation_z_min=rot_z_min,
+                    rotation_z_max=rot_z_max,
+                    rotate_as_unit=arr_cfg.get("rotate_as_unit", True),
+                )
+                for obj in group.members:
+                    self.randomizer.randomize_material(obj, rng, cfg, texture_asset=None)
+
+            for obj in solo_targets:
                 self.randomizer.place_object(
                     obj, rng, placed_aabbs,
                     spread=t_spread,
@@ -248,9 +284,10 @@ class SDGPipeline:
             cols           = [c.name for c in obj.users_collection]
             col_hide       = [bpy.data.collections[c].hide_render
                               for c in cols if c in bpy.data.collections]
+            world_loc      = obj.matrix_world.translation
             logging.info(
                 f"  target inst_{iid} '{name}' "
-                f"loc={tuple(round(x, 3) for x in obj.location)} "
+                f"loc={tuple(round(x, 3) for x in world_loc)} "
                 f"scale={round(obj.scale[0], 3)} pass_index={obj.pass_index} "
                 f"hide_render={obj.hide_render} cols={cols} col_hide_render={col_hide}"
             )
@@ -262,22 +299,40 @@ class SDGPipeline:
             blend_path = str(output_dir / "blends" / f"{img_idx:04d}.blend")
             bpy.ops.wm.save_as_mainfile(filepath=blend_path, copy=True)
 
-        # 4. Per-image label JSON (KV format)
+        # Build group membership lookup and capture world transforms BEFORE teardown.
+        # (After destroy_group the children are reset to origin, so read positions now.)
+        group_id_by_name = {}
+        for g_idx, group in enumerate(active_groups):
+            for obj in group.members:
+                group_id_by_name[obj.name] = g_idx
+
+        # 4. Per-image label JSON (KV format) — read world transforms while groups still exist
         label_objects = []
         for inst_id, name in id_map.items():
             obj   = bpy.data.objects[name]
             color = list(inst_colors[inst_id])
-            label_objects.append({
+            entry = {
                 "name":       name,
-                "position":   [round(v, 8) for v in obj.location],
-                "rotation":   [round(math.degrees(a), 8) for a in obj.rotation_euler],
+                # Use world-space transform (obj.location is parent-local for grouped objects)
+                "position":   [round(v, 8) for v in obj.matrix_world.translation],
+                "rotation":   [round(math.degrees(a), 8) for a in obj.matrix_world.to_euler()],
                 "mask_color": color,
-            })
+            }
+            g_id = group_id_by_name.get(name)
+            if g_id is not None:
+                entry["group_id"] = g_id
+            label_objects.append(entry)
+
+        # Tear down groups after reading positions (restores children to hidden/unparented)
+        for group in active_groups:
+            destroy_group(group)
+        active_groups = []
+
         for obj in active_distractors:
             entry = {
                 "name":     obj.name,
-                "position": [round(v, 8) for v in obj.location],
-                "rotation": [round(math.degrees(a), 8) for a in obj.rotation_euler],
+                "position": [round(v, 8) for v in obj.matrix_world.translation],
+                "rotation": [round(math.degrees(a), 8) for a in obj.matrix_world.to_euler()],
             }
             if tex:
                 entry["material_image"] = tex.path.name

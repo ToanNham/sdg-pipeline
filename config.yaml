@@ -15,7 +15,7 @@ scene:
   objects_per_scene_min: 1       # kept for reference; per-class counts now control spawn
   objects_per_scene_max: 4
   per_class_min: 1               # min instances spawned per model category per image
-  per_class_max: 4               # max instances spawned per model category per image
+  per_class_max: 9               # max instances spawned per model category per image (must be >= max grid rows*cols)
   distractors_min: 2
   distractors_max: 10
   distractor_primitive_size: 0.2  # diameter (meters) for spawned primitive occluders
@@ -30,6 +30,17 @@ scene:
   target_rotation_y_max: 115      # degrees
   target_rotation_z_min: -24      # degrees
   target_rotation_z_max: 24       # degrees
+
+  arrangements:
+    enabled: true
+    group_probability: 0.6        # chance each model class is placed as a group vs. solo
+    grid_sizes:                   # [rows, cols, weight] — higher weight = sampled more often
+      - [1, 1, 1]
+      - [2, 2, 3]
+      - [3, 3, 1]
+    cell_spacing: 0.0             # extra gap in metres beyond flush contact (0 = meshes touching)
+    group_placement_retries: 15   # collision avoidance retries for entire group
+    rotate_as_unit: true          # rotate the whole group as one rigid cluster
 
 camera:
   distance_min: 2.0

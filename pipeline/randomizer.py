@@ -224,6 +224,100 @@ def place_object_no_overlap(
 
 
 # ---------------------------------------------------------------------------
+# Group AABB and placement
+# ---------------------------------------------------------------------------
+
+def get_group_world_aabb(members: list, margin: float = 0.0):
+    """World-space union AABB of all child mesh objects in a group.
+
+    Call bpy.context.view_layer.update() before this to ensure matrix_world
+    of each child is current after the pivot was moved.
+    margin is applied to the union boundary (not per-child).
+    """
+    all_mins = []
+    all_maxs = []
+    for child in members:
+        c_min, c_max = get_world_aabb(child, margin=0.0)
+        all_mins.append(c_min)
+        all_maxs.append(c_max)
+    union_min = mathutils.Vector((
+        min(v.x for v in all_mins) - margin,
+        min(v.y for v in all_mins) - margin,
+        min(v.z for v in all_mins) - margin,
+    ))
+    union_max = mathutils.Vector((
+        max(v.x for v in all_maxs) + margin,
+        max(v.y for v in all_maxs) + margin,
+        max(v.z for v in all_maxs) + margin,
+    ))
+    return union_min, union_max
+
+
+def place_group_no_overlap(
+    group,
+    rng: np.random.Generator,
+    placed_aabbs: list,
+    spread: float = 1.5,
+    bounds_objs: list = None,
+    max_retries: int = 15,
+    margin: float = 0.0,
+    rotation_x_min: float = None,
+    rotation_x_max: float = None,
+    rotation_y_min: float = None,
+    rotation_y_max: float = None,
+    rotation_z_min: float = None,
+    rotation_z_max: float = None,
+    rotate_as_unit: bool = True,
+) -> None:
+    """Place a GroupArrangement's pivot without overlapping placed_aabbs.
+
+    Moves only the pivot; children follow via parenting.  Calls
+    bpy.context.view_layer.update() after each trial so child world transforms
+    are current before the union AABB is computed.
+    On exit, the group's final union AABB is appended to placed_aabbs.
+    """
+    pivot = group.pivot
+
+    for _ in range(max_retries + 1):
+        # Sample pivot position using same logic as randomize_object_transform
+        if bounds_objs:
+            empty = bounds_objs[int(rng.integers(0, len(bounds_objs)))]
+            loc = empty.location
+            sc  = empty.scale
+            pivot.location.x = float(rng.uniform(loc.x - abs(sc.x), loc.x + abs(sc.x)))
+            pivot.location.y = float(rng.uniform(loc.y - abs(sc.y), loc.y + abs(sc.y)))
+            pivot.location.z = float(rng.uniform(loc.z - abs(sc.z), loc.z + abs(sc.z)))
+        else:
+            pivot.location.x = float(rng.uniform(-spread, spread))
+            pivot.location.y = float(rng.uniform(-spread, spread))
+            pivot.location.z = 0.0
+
+        if rotate_as_unit:
+            pivot.rotation_mode = 'XYZ'
+            if rotation_x_min is not None and rotation_x_max is not None:
+                rx = float(rng.uniform(math.radians(rotation_x_min), math.radians(rotation_x_max)))
+            else:
+                rx = float(rng.uniform(0.0, 2.0 * math.pi))
+            if rotation_y_min is not None and rotation_y_max is not None:
+                ry = float(rng.uniform(math.radians(rotation_y_min), math.radians(rotation_y_max)))
+            else:
+                ry = float(rng.uniform(0.0, 2.0 * math.pi))
+            if rotation_z_min is not None and rotation_z_max is not None:
+                rz = float(rng.uniform(math.radians(rotation_z_min), math.radians(rotation_z_max)))
+            else:
+                rz = float(rng.uniform(0.0, 2.0 * math.pi))
+            pivot.rotation_euler = (rx, ry, rz)
+
+        bpy.context.view_layer.update()
+        new_min, new_max = get_group_world_aabb(group.members, margin=margin)
+        if not any(aabbs_overlap(new_min, new_max, p_min, p_max)
+                   for p_min, p_max in placed_aabbs):
+            break
+
+    placed_aabbs.append((new_min, new_max))
+
+
+# ---------------------------------------------------------------------------
 # Lights
 # ---------------------------------------------------------------------------
 
@@ -555,6 +649,27 @@ class Randomizer:
             rotation_y_max=rotation_y_max,
             rotation_z_min=rotation_z_min,
             rotation_z_max=rotation_z_max,
+        )
+
+    def place_group(self, group, rng, placed_aabbs, spread=1.5,
+                    bounds_objs=None, max_retries=15, margin=0.0,
+                    rotation_x_min=None, rotation_x_max=None,
+                    rotation_y_min=None, rotation_y_max=None,
+                    rotation_z_min=None, rotation_z_max=None,
+                    rotate_as_unit=True):
+        place_group_no_overlap(
+            group, rng, placed_aabbs,
+            spread=spread,
+            bounds_objs=bounds_objs,
+            max_retries=max_retries,
+            margin=margin,
+            rotation_x_min=rotation_x_min,
+            rotation_x_max=rotation_x_max,
+            rotation_y_min=rotation_y_min,
+            rotation_y_max=rotation_y_max,
+            rotation_z_min=rotation_z_min,
+            rotation_z_max=rotation_z_max,
+            rotate_as_unit=rotate_as_unit,
         )
 
     def randomize_material(self, obj, rng, cfg, texture_asset=None):
