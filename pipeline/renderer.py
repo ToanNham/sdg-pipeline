@@ -113,9 +113,18 @@ def setup_compositor(scene, img_idx: int, output_dir: Path, id_map: dict,
 
     # Color instance mask — built in compositor, no Python file I/O.
     # For each instance: ID_MASK (0/1 float) × instance color → ADD all together.
+    #
+    # Blender's compositor works in linear light and sRGB-encodes PNG output by default.
+    # Passing c/255 directly would double-encode: the PNG byte would be sRGB(c/255), not c.
+    # Fix: pre-apply sRGB decode (linearise the uint8 value) so that Blender's sRGB encoding
+    # round-trips back to exactly c.  sRGB_encode(sRGB_decode(c/255)) == c/255.
+    def _srgb_to_linear(c: int) -> float:
+        v = c / 255.0
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
     accum = None
     for inst_id in sorted(id_map.keys()):
-        r, g, b = [c / 255.0 for c in inst_colors[inst_id]]
+        r, g, b = [_srgb_to_linear(c) for c in inst_colors[inst_id]]
 
         id_mask = tree.nodes.new("CompositorNodeIDMask")
         id_mask.index = inst_id
