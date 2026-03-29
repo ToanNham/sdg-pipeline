@@ -62,6 +62,9 @@ class AssetRegistry:
             for p in Path(tex_dir).iterdir():
                 if p.is_dir():
                     reg.register("textures", Asset(path=p))
+            for ext in ("**/*.jpg", "**/*.jpeg", "**/*.png"):
+                for p in Path(tex_dir).glob(ext):
+                    reg.register("textures", Asset(path=p))
 
         bg_dir = cfg["assets"].get("backgrounds")
         if bg_dir:

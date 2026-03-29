@@ -565,6 +565,18 @@ def randomize_background_material(
     return roughness
 
 
+def _apply_single_image(nodes, links, bsdf, image_path: Path) -> None:
+    """Load a single image file and wire it as Base Color on the Principled BSDF."""
+    tex_node = nodes.get("sdg_tex_img")
+    if tex_node is None:
+        tex_node = nodes.new("ShaderNodeTexImage")
+        tex_node.name = "sdg_tex_img"
+    tex_node.image = bpy.data.images.load(
+        str(Path(image_path).resolve()), check_existing=True
+    )
+    links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+
+
 def randomize_material(
     obj,
     rng: np.random.Generator,
@@ -593,7 +605,10 @@ def randomize_material(
 
     mc = cfg["material"]
     if texture_asset is not None and mc.get("use_texture_sets", False):
-        _apply_texture_set(nodes, links, bsdf, texture_asset.path)
+        if texture_asset.path.is_dir():
+            _apply_texture_set(nodes, links, bsdf, texture_asset.path)
+        else:
+            _apply_single_image(nodes, links, bsdf, texture_asset.path)
     else:
         if mc.get("randomize_color", True):
             r, g, b = (float(x) for x in rng.uniform(0.0, 1.0, 3))

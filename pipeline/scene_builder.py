@@ -136,6 +136,14 @@ def import_model(path: Path, collection_name: str = None) -> list:
     after = set(bpy.data.objects)
     new_objs = [obj for obj in (after - before) if obj.type == 'MESH']
 
+    # Apply scale and rotation so random rotations don't cause shearing on
+    # meshes that were exported with non-uniform or non-applied transforms.
+    for obj in new_objs:
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+        obj.select_set(False)
+
     if collection_name:
         col = bpy.data.collections.get(collection_name)
         if col is not None:
@@ -196,8 +204,8 @@ def spawn_distractors(registry, rng, cfg) -> list:
     _PRIMITIVE_OPS = [
         lambda: bpy.ops.mesh.primitive_cube_add(size=prim_size),
         lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=half),
-        lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half),
-        lambda: bpy.ops.mesh.primitive_cone_add(radius1=half),
+        lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half, depth=prim_size),
+        lambda: bpy.ops.mesh.primitive_cone_add(radius1=half, depth=prim_size),
         lambda: bpy.ops.mesh.primitive_torus_add(major_radius=half, minor_radius=half * 0.3),
     ]
     occluders_col = bpy.data.collections.get("Occluders")
@@ -331,8 +339,8 @@ def build_distractor_pool(registry, cfg: dict) -> list:
     _PRIMITIVE_OPS = [
         lambda: bpy.ops.mesh.primitive_cube_add(size=prim_size),
         lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=half),
-        lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half),
-        lambda: bpy.ops.mesh.primitive_cone_add(radius1=half),
+        lambda: bpy.ops.mesh.primitive_cylinder_add(radius=half, depth=prim_size),
+        lambda: bpy.ops.mesh.primitive_cone_add(radius1=half, depth=prim_size),
         lambda: bpy.ops.mesh.primitive_torus_add(major_radius=half, minor_radius=half * 0.3),
     ]
     occluders_col = bpy.data.collections.get("Occluders")

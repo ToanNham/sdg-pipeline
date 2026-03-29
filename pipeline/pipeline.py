@@ -192,8 +192,7 @@ class SDGPipeline:
                     scene, rng, cfg, bg[0].path
                 )
 
-            tex_assets = self._registry.sample("textures", rng, n=1)
-            tex        = tex_assets[0] if tex_assets else None
+            tex_pool = self._registry._pools["textures"]
 
             t_spread    = cfg["scene"].get("target_spread", 0.5)
             max_retries = cfg["scene"].get("max_placement_retries", 10)
@@ -252,6 +251,7 @@ class SDGPipeline:
                     max_retries=max_retries,
                     margin=margin,
                 )
+                tex = tex_pool[int(rng.integers(len(tex_pool)))] if tex_pool else None
                 self.randomizer.randomize_material(obj, rng, cfg, texture_asset=tex)
 
         # In debug mode, read light info from the scene
