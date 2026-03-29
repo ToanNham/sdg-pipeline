@@ -12,10 +12,15 @@ import math
 from pathlib import Path
 
 import bpy
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 KV_BLEND = str(ROOT / "KV example datagen.blend")
 OUT_BLEND = str(ROOT / "base_scene.blend")
+
+with open(ROOT / "config.yaml") as f:
+    cfg = yaml.safe_load(f)
+_r = cfg["render"]
 
 # ---------------------------------------------------------------------------
 # Open KV example
@@ -46,17 +51,17 @@ for name in REMOVE_OBJECTS:
 # Render settings — match KV example exactly
 # ---------------------------------------------------------------------------
 scene.render.engine = "CYCLES"
-scene.render.resolution_x = 1080
-scene.render.resolution_y = 1080
+scene.render.resolution_x = _r["resolution_x"]
+scene.render.resolution_y = _r["resolution_y"]
 scene.render.resolution_percentage = 100
 scene.render.film_transparent = False
 scene.render.use_motion_blur = False
 
-scene.cycles.device = "GPU"
-scene.cycles.samples = 20
-scene.cycles.preview_samples = 20
-scene.cycles.use_denoising = True
-scene.cycles.denoiser = "OPTIX"
+scene.cycles.device = _r["device"]
+scene.cycles.samples = _r["samples"]
+scene.cycles.preview_samples = _r["samples"]
+scene.cycles.use_denoising = _r.get("use_denoiser", True)
+scene.cycles.denoiser = _r.get("denoiser", "OPENIMAGEDENOISE")
 scene.cycles.use_adaptive_sampling = True
 
 # ---------------------------------------------------------------------------

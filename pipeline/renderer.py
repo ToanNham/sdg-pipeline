@@ -10,6 +10,23 @@ All bpy access is deferred to function bodies; no module-level bpy calls.
 from pathlib import Path
 
 
+def _enable_gpu_devices(compute_device_type: str) -> None:
+    """Enable GPU devices in Blender Cycles preferences.
+
+    Must be called before scene.cycles.device = "GPU" takes effect.
+    Without this Blender silently falls back to CPU.
+
+    Args:
+        compute_device_type: "CUDA", "OPTIX", "HIP", or "METAL"
+    """
+    import bpy
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+    prefs.compute_device_type = compute_device_type
+    prefs.get_devices()
+    for device in prefs.devices:
+        device.use = True
+
+
 def configure_cycles(scene, cfg) -> None:
     """Configure Cycles renderer from config dict.
 
@@ -21,6 +38,8 @@ def configure_cycles(scene, cfg) -> None:
 
     r = cfg["render"]
     scene.render.engine = "CYCLES"
+    if r["device"] == "GPU":
+        _enable_gpu_devices(r.get("compute_device_type", "CUDA"))
     scene.cycles.device = r["device"]
     scene.cycles.samples = r["samples"]
     scene.render.resolution_x = r["resolution_x"]

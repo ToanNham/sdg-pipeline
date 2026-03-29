@@ -1,10 +1,11 @@
 render:
   engine: CYCLES
   device: GPU                  # GPU or CPU
-  samples: 64
+  compute_device_type: CUDA    # CUDA (NVIDIA), OPTIX (NVIDIA RTX), HIP (AMD), METAL (Apple)
+  samples: 20
   use_denoiser: true
   denoiser: OPENIMAGEDENOISE   # or OPTIX for NVIDIA
-  resolution_x: 1920
+  resolution_x: 1080
   resolution_y: 1080
 
 scene:
@@ -16,6 +17,8 @@ scene:
   distractors_max: 6
   distractor_primitive_size: 0.2  # diameter (meters) for spawned primitive occluders
   target_spread: 0.5              # fallback XY spread if Bounds empties not found
+  max_placement_retries: 10       # retry attempts before accepting last position
+  placement_margin: 0.0           # extra clearance in metres added to each AABB edge
   background_roughness_min: 0.3
   background_roughness_max: 1.0
 
