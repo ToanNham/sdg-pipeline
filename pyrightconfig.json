@@ -1,0 +1,34 @@
+{
+    "pythonVersion": "3.11",
+    "pythonPlatform": "Linux",
+    "typeCheckingMode": "basic",
+    "venvPath": "C:/Users/nhamd/miniconda3/envs",
+    "venv": "sdg-pipeline",
+    "include": [
+        "pipeline",
+        "run.py",
+        "merge_coco.py",
+        "validate_output.py",
+        "visualize.py"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        "output",
+        "assets",
+        "scripts"
+    ],
+    "reportMissingImports": "warning",
+    "reportMissingModuleSource": "warning",
+    "reportUnusedImport": "warning",
+    "reportUnusedVariable": "warning",
+    "reportGeneralTypeIssues": "warning",
+    "reportOptionalSubscript": "warning",
+    "reportOptionalMemberAccess": "warning",
+    "reportAttributeAccessIssue": "none",
+    "reportCallIssue": "none",
+    "reportIndexIssue": "none",
+    "reportOperatorIssue": "none",
+    "reportReturnType": "none",
+    "reportArgumentType": "none",
+    "reportFunctionMemberAccess": "none"
+}

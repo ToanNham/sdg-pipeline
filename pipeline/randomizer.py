@@ -1,6 +1,5 @@
 import math
 from pathlib import Path
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -15,7 +14,7 @@ _LIGHT_TYPES = ["POINT", "SUN", "AREA", "SPOT"]
 # Color temperature
 # ---------------------------------------------------------------------------
 
-def kelvin_to_rgb(temp: float) -> Tuple[float, float, float]:
+def kelvin_to_rgb(temp: float) -> tuple[float, float, float]:
     """Convert color temperature in Kelvin to an RGB tuple (0.0–1.0 each).
 
     Uses Tanner Helland's algorithm. Valid range: ~1000 K – 40000 K.

@@ -1,7 +1,12 @@
-import sys, site
+import argparse
+import site
+import sys
+
 sys.path.insert(0, site.getusersitepackages())
-import argparse, yaml
+
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -10,7 +15,11 @@ from pipeline import SDGPipeline
 
 def validate_config(cfg):
     """Check required config fields before any rendering begins."""
-    for key in ("render", "scene", "camera", "lighting", "material", "assets", "output_dir", "num_images", "seed"):
+    required_keys = (
+        "render", "scene", "camera", "lighting", "material",
+        "assets", "output_dir", "num_images", "seed",
+    )
+    for key in required_keys:
         if key not in cfg:
             print(f"ConfigError: missing required key '{key}'")
             sys.exit(1)

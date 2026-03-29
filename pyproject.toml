@@ -1,0 +1,37 @@
+[project]
+name = "sdg-pipeline"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+# ---------------------------------------------------------------------------
+# Ruff — linter + formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = ["__pycache__", ".git", "output", "assets"]
+
+[tool.ruff.lint]
+# E/W  – pycodestyle style errors and warnings
+# F    – pyflakes (undefined names, unused imports, etc.)
+# I    – isort (import ordering)
+# N    – pep8-naming conventions
+# UP   – pyupgrade (modernize typing syntax for Python 3.11)
+# B    – flake8-bugbear (common gotchas)
+select = ["E", "W", "F", "I", "N", "UP", "B"]
+ignore = [
+    "E501",  # long lines — decorative section banners intentionally exceed 100 chars
+    "B008",  # function calls in default args — Blender API pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+# scripts/ are Blender test harnesses; relax naming rules for uppercase constants
+"scripts/*.py" = ["N802", "N806"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["bpy", "mathutils", "numpy", "yaml", "PIL", "skimage", "shapely"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
