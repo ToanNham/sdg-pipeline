@@ -89,6 +89,12 @@ def randomize_object_transform(
     scale_max: float = 1.3,
     bounds_objs: list = None,
     randomize_scale: bool = True,
+    rotation_x_min: float = None,
+    rotation_x_max: float = None,
+    rotation_y_min: float = None,
+    rotation_y_max: float = None,
+    rotation_z_min: float = None,
+    rotation_z_max: float = None,
 ) -> None:
     """Randomize location, rotation (all axes), and optionally uniform scale.
 
@@ -113,10 +119,20 @@ def randomize_object_transform(
         obj.location.y = float(rng.uniform(-spread, spread))
         obj.location.z = 0.0
 
-    rx = float(rng.uniform(0.0, 2.0 * math.pi))
-    ry = float(rng.uniform(0.0, 2.0 * math.pi))
-    rz = float(rng.uniform(0.0, 2.0 * math.pi))
-    obj.rotation_quaternion = mathutils.Euler((rx, ry, rz), 'XYZ').to_quaternion()
+    if rotation_x_min is not None and rotation_x_max is not None:
+        rx = float(rng.uniform(math.radians(rotation_x_min), math.radians(rotation_x_max)))
+    else:
+        rx = float(rng.uniform(0.0, 2.0 * math.pi))
+    if rotation_y_min is not None and rotation_y_max is not None:
+        ry = float(rng.uniform(math.radians(rotation_y_min), math.radians(rotation_y_max)))
+    else:
+        ry = float(rng.uniform(0.0, 2.0 * math.pi))
+    if rotation_z_min is not None and rotation_z_max is not None:
+        rz = float(rng.uniform(math.radians(rotation_z_min), math.radians(rotation_z_max)))
+    else:
+        rz = float(rng.uniform(0.0, 2.0 * math.pi))
+    obj.rotation_mode = 'XYZ'
+    obj.rotation_euler = (rx, ry, rz)
 
     if randomize_scale:
         s = float(rng.uniform(scale_min, scale_max))
@@ -168,6 +184,12 @@ def place_object_no_overlap(
     randomize_scale: bool = True,
     max_retries: int = 10,
     margin: float = 0.0,
+    rotation_x_min: float = None,
+    rotation_x_max: float = None,
+    rotation_y_min: float = None,
+    rotation_y_max: float = None,
+    rotation_z_min: float = None,
+    rotation_z_max: float = None,
 ) -> None:
     """Place obj without overlapping placed_aabbs; retry up to max_retries times.
 
@@ -184,6 +206,12 @@ def place_object_no_overlap(
             scale_max=scale_max,
             bounds_objs=bounds_objs,
             randomize_scale=randomize_scale,
+            rotation_x_min=rotation_x_min,
+            rotation_x_max=rotation_x_max,
+            rotation_y_min=rotation_y_min,
+            rotation_y_max=rotation_y_max,
+            rotation_z_min=rotation_z_min,
+            rotation_z_max=rotation_z_max,
         )
         bpy.context.view_layer.update()
         new_min, new_max = get_world_aabb(obj, margin=margin)
@@ -484,3 +512,50 @@ def randomize_material(
             bsdf.inputs["Metallic"].default_value = float(
                 rng.choice(np.array([0.0, 1.0]))
             )
+
+
+# ---------------------------------------------------------------------------
+# Extensibility wrapper
+# ---------------------------------------------------------------------------
+
+class Randomizer:
+    """Thin wrapper around module-level randomization functions.
+
+    Subclass and override individual methods to customise specific stages
+    without touching any other part of the pipeline.
+    """
+
+    def randomize_camera(self, cam_obj, rng, cfg):
+        randomize_camera(cam_obj, rng, cfg)
+
+    def randomize_light(self, light_obj, rng, cfg):
+        return randomize_light_inplace(light_obj, rng, cfg)
+
+    def randomize_background(self, scene, rng, cfg, bg_image_path):
+        return randomize_background_material(scene, rng, cfg, bg_image_path)
+
+    def place_object(self, obj, rng, placed_aabbs, spread=1.5,
+                     scale_min=0.7, scale_max=1.3, bounds_objs=None,
+                     randomize_scale=True, max_retries=10, margin=0.0,
+                     rotation_x_min=None, rotation_x_max=None,
+                     rotation_y_min=None, rotation_y_max=None,
+                     rotation_z_min=None, rotation_z_max=None):
+        place_object_no_overlap(
+            obj, rng, placed_aabbs,
+            spread=spread,
+            scale_min=scale_min,
+            scale_max=scale_max,
+            bounds_objs=bounds_objs,
+            randomize_scale=randomize_scale,
+            max_retries=max_retries,
+            margin=margin,
+            rotation_x_min=rotation_x_min,
+            rotation_x_max=rotation_x_max,
+            rotation_y_min=rotation_y_min,
+            rotation_y_max=rotation_y_max,
+            rotation_z_min=rotation_z_min,
+            rotation_z_max=rotation_z_max,
+        )
+
+    def randomize_material(self, obj, rng, cfg, texture_asset=None):
+        randomize_material(obj, rng, cfg, texture_asset)

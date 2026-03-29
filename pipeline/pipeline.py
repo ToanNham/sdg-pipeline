@@ -175,6 +175,12 @@ class SDGPipeline:
             t_spread    = cfg["scene"].get("target_spread", 0.5)
             max_retries = cfg["scene"].get("max_placement_retries", 10)
             margin      = float(cfg["scene"].get("placement_margin", 0.0))
+            rot_x_min   = cfg["scene"].get("target_rotation_x_min", None)
+            rot_x_max   = cfg["scene"].get("target_rotation_x_max", None)
+            rot_y_min   = cfg["scene"].get("target_rotation_y_min", None)
+            rot_y_max   = cfg["scene"].get("target_rotation_y_max", None)
+            rot_z_min   = cfg["scene"].get("target_rotation_z_min", None)
+            rot_z_max   = cfg["scene"].get("target_rotation_z_max", None)
             placed_aabbs: list = []
 
             for obj in active_targets:
@@ -185,6 +191,12 @@ class SDGPipeline:
                     randomize_scale=False,
                     max_retries=max_retries,
                     margin=margin,
+                    rotation_x_min=rot_x_min,
+                    rotation_x_max=rot_x_max,
+                    rotation_y_min=rot_y_min,
+                    rotation_y_max=rot_y_max,
+                    rotation_z_min=rot_z_min,
+                    rotation_z_max=rot_z_max,
                 )
                 self.randomizer.randomize_material(obj, rng, cfg, texture_asset=None)
 

@@ -15,15 +15,21 @@ scene:
   objects_per_scene_min: 1       # kept for reference; per-class counts now control spawn
   objects_per_scene_max: 4
   per_class_min: 1               # min instances spawned per model category per image
-  per_class_max: 2               # max instances spawned per model category per image
+  per_class_max: 4               # max instances spawned per model category per image
   distractors_min: 2
-  distractors_max: 6
+  distractors_max: 10
   distractor_primitive_size: 0.2  # diameter (meters) for spawned primitive occluders
   target_spread: 0.5              # fallback XY spread if Bounds empties not found
   max_placement_retries: 10       # retry attempts before accepting last position
   placement_margin: 0.0           # extra clearance in metres added to each AABB edge
-  background_roughness_min: 0.3
+  background_roughness_min: 0.15
   background_roughness_max: 1.0
+  target_rotation_x_min: -22      # degrees — keep targets nearly upright
+  target_rotation_x_max: 22       # degrees
+  target_rotation_y_min: 65       # degrees — constrain targets to upright/on-side orientation
+  target_rotation_y_max: 115      # degrees
+  target_rotation_z_min: -24      # degrees
+  target_rotation_z_max: 24       # degrees
 
 camera:
   distance_min: 2.0
@@ -36,10 +42,10 @@ camera:
 lighting:
   radius_min: 2.0                # min distance from scene centre for light placement
   radius_max: 4.5                # max distance from scene centre for light placement
-  intensity_min: 500
-  intensity_max: 4000
-  color_temp_min: 3200
-  color_temp_max: 6500
+  intensity_min: 80
+  intensity_max: 300
+  color_temp_min: 4000
+  color_temp_max: 15000
 
 material:
   randomize_color: true
