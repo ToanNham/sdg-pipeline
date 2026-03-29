@@ -138,11 +138,16 @@ def import_model(path: Path, collection_name: str = None) -> list:
 
     # Apply scale and rotation so random rotations don't cause shearing on
     # meshes that were exported with non-uniform or non-applied transforms.
-    for obj in new_objs:
-        bpy.context.view_layer.objects.active = obj
-        obj.select_set(True)
+    # Select the whole batch at once, make every mesh datablock single-user
+    # (handles GLBs with linked/shared mesh data), then apply in one call.
+    if new_objs:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in new_objs:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = new_objs[0]
+        bpy.ops.object.make_single_user(type='SELECTED_OBJECTS', object=False, obdata=True)
         bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-        obj.select_set(False)
+        bpy.ops.object.select_all(action='DESELECT')
 
     if collection_name:
         col = bpy.data.collections.get(collection_name)

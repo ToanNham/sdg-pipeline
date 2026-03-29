@@ -69,10 +69,44 @@ material:
 
 assets:
   models:
+    # KV-provided products
     - path: assets/models/
-      glob: "*.glb"             # .glb files include embedded textures
+      glob: "cherry_coke.glb"
       category_id: 1
-      category_name: your_object
+      category_name: cherry_coke
+    - path: assets/models/
+      glob: "coke.glb"
+      category_id: 2
+      category_name: coke
+    - path: assets/models/
+      glob: "coke_zero.glb"
+      category_id: 3
+      category_name: coke_zero
+    - path: assets/models/
+      glob: "diet_coke.glb"
+      category_id: 4
+      category_name: diet_coke
+    - path: assets/models/
+      glob: "fanta.glb"
+      category_id: 5
+      category_name: fanta
+    - path: assets/models/
+      glob: "sprite.glb"
+      category_id: 6
+      category_name: sprite
+    # Custom models
+    - path: assets/models/
+      glob: "green_custom.glb"
+      category_id: 7
+      category_name: green_custom
+    - path: assets/models/
+      glob: "orange_custom.glb"
+      category_id: 8
+      category_name: orange_custom
+    - path: assets/models/
+      glob: "red_custom.glb"
+      category_id: 9
+      category_name: red_custom
   distractors:
     meshes: assets/distractors/
     use_primitives: true
