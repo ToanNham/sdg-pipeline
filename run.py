@@ -13,6 +13,7 @@ from pipeline.scene_builder     import (set_background,
                                         activate_frame_objects)
 from pipeline.randomizer        import (randomize_camera, randomize_light_inplace,
                                         randomize_object_transform,
+                                        place_object_no_overlap,
                                         randomize_material,
                                         randomize_background_material)
 from pipeline.renderer          import (configure_cycles, enable_object_index_pass,
@@ -95,13 +96,30 @@ for img_idx in range(args.start, end):
             bg_roughness = randomize_background_material(scene, rng, cfg, bg[0].path)
         tex = registry.sample("textures", rng, n=1)
         tex = tex[0] if tex else None
-        t_spread = cfg["scene"].get("target_spread", 0.5)
+        t_spread    = cfg["scene"].get("target_spread", 0.5)
+        max_retries = cfg["scene"].get("max_placement_retries", 10)
+        margin      = float(cfg["scene"].get("placement_margin", 0.0))
+        placed_aabbs = []  # reset per frame
+
         for obj in active_targets:
-            randomize_object_transform(obj, rng, spread=t_spread,
-                                       bounds_objs=BOUNDS_OBJS, randomize_scale=False)
+            place_object_no_overlap(
+                obj, rng, placed_aabbs,
+                spread=t_spread,
+                bounds_objs=BOUNDS_OBJS,
+                randomize_scale=False,
+                max_retries=max_retries,
+                margin=margin,
+            )
             randomize_material(obj, rng, cfg, texture_asset=None)  # targets have embedded textures
+
         for obj in active_distractors:
-            randomize_object_transform(obj, rng, bounds_objs=BOUNDS_OBJS, randomize_scale=False)
+            place_object_no_overlap(
+                obj, rng, placed_aabbs,
+                bounds_objs=BOUNDS_OBJS,
+                randomize_scale=False,
+                max_retries=max_retries,
+                margin=margin,
+            )
             randomize_material(obj, rng, cfg, texture_asset=tex)
 
     # In debug mode, read light info from pool_light

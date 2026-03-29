@@ -124,6 +124,78 @@ def randomize_object_transform(
 
 
 # ---------------------------------------------------------------------------
+# Collision / overlap helpers
+# ---------------------------------------------------------------------------
+
+def get_world_aabb(obj, margin: float = 0.0):
+    """World-space AABB of obj as (min_co, max_co).
+
+    Call bpy.context.view_layer.update() before this to ensure
+    obj.matrix_world reflects any recent location/rotation/scale changes.
+    margin: expand AABB outward by this many metres on every side.
+    """
+    corners = [obj.matrix_world @ mathutils.Vector(c) for c in obj.bound_box]
+    min_co = mathutils.Vector((
+        min(v.x for v in corners) - margin,
+        min(v.y for v in corners) - margin,
+        min(v.z for v in corners) - margin,
+    ))
+    max_co = mathutils.Vector((
+        max(v.x for v in corners) + margin,
+        max(v.y for v in corners) + margin,
+        max(v.z for v in corners) + margin,
+    ))
+    return min_co, max_co
+
+
+def aabbs_overlap(a_min, a_max, b_min, b_max) -> bool:
+    """Return True if two AABBs overlap (touching counts)."""
+    return (
+        a_min.x <= b_max.x and a_max.x >= b_min.x and
+        a_min.y <= b_max.y and a_max.y >= b_min.y and
+        a_min.z <= b_max.z and a_max.z >= b_min.z
+    )
+
+
+def place_object_no_overlap(
+    obj,
+    rng: np.random.Generator,
+    placed_aabbs: list,
+    spread: float = 1.5,
+    scale_min: float = 0.7,
+    scale_max: float = 1.3,
+    bounds_objs: list = None,
+    randomize_scale: bool = True,
+    max_retries: int = 10,
+    margin: float = 0.0,
+) -> None:
+    """Place obj without overlapping placed_aabbs; retry up to max_retries times.
+
+    Delegates to randomize_object_transform() for each candidate placement.
+    bpy.context.view_layer.update() is called after each placement so
+    obj.matrix_world is current before the AABB is read.
+    On exit, the object's final AABB is appended to placed_aabbs.
+    """
+    for _ in range(max_retries + 1):
+        randomize_object_transform(
+            obj, rng,
+            spread=spread,
+            scale_min=scale_min,
+            scale_max=scale_max,
+            bounds_objs=bounds_objs,
+            randomize_scale=randomize_scale,
+        )
+        bpy.context.view_layer.update()
+        new_min, new_max = get_world_aabb(obj, margin=margin)
+        if not any(aabbs_overlap(new_min, new_max, p_min, p_max)
+                   for p_min, p_max in placed_aabbs):
+            break  # non-overlapping position found
+        # final iteration: accept overlapping position silently
+
+    placed_aabbs.append((new_min, new_max))
+
+
+# ---------------------------------------------------------------------------
 # Lights
 # ---------------------------------------------------------------------------
 
@@ -312,17 +384,14 @@ def randomize_background_roughness(scene, rng: np.random.Generator, cfg: dict) -
         sc.get("background_roughness_min", 0.3),
         sc.get("background_roughness_max", 1.0),
     ))
-    bg_col = bpy.data.collections.get("Background")
-    if bg_col:
-        for obj in bg_col.objects:
-            if obj.type != "MESH" or not obj.data.materials:
-                continue
-            mat = obj.data.materials[0]
-            if mat and mat.use_nodes:
-                bsdf = next((n for n in mat.node_tree.nodes
-                             if n.type == "BSDF_PRINCIPLED"), None)
-                if bsdf:
-                    bsdf.inputs["Roughness"].default_value = roughness
+    bg_mesh = bpy.data.objects.get("Background")
+    if bg_mesh and bg_mesh.type == "MESH" and bg_mesh.data.materials:
+        mat = bg_mesh.data.materials[0]
+        if mat and mat.use_nodes:
+            bsdf = next((n for n in mat.node_tree.nodes
+                         if n.type == "BSDF_PRINCIPLED"), None)
+            if bsdf:
+                bsdf.inputs["Roughness"].default_value = roughness
     return roughness
 
 
@@ -341,11 +410,8 @@ def randomize_background_material(
         sc.get("background_roughness_max", 1.0),
     ))
 
-    bg_col = bpy.data.collections.get("Background")
-    if not bg_col:
-        return roughness
-    bg_mesh = next((o for o in bg_col.objects if o.type == "MESH"), None)
-    if bg_mesh is None:
+    bg_mesh = bpy.data.objects.get("Background")
+    if bg_mesh is None or bg_mesh.type != "MESH":
         return roughness
 
     if not bg_mesh.data.materials:
@@ -359,7 +425,10 @@ def randomize_background_material(
 
     bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
     if bsdf is None:
-        return roughness
+        nodes.clear()
+        bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+        out  = nodes.new("ShaderNodeOutputMaterial")
+        links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
 
     tex_node = nodes.get("sdg_bg_tex")
     if tex_node is None:
