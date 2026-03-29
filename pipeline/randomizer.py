@@ -87,18 +87,40 @@ def randomize_object_transform(
     spread: float = 1.5,
     scale_min: float = 0.7,
     scale_max: float = 1.3,
+    bounds_objs: list = None,
+    randomize_scale: bool = True,
 ) -> None:
-    """Randomize location (XY only), rotation (all axes), and uniform scale."""
-    obj.location.x = float(rng.uniform(-spread, spread))
-    obj.location.y = float(rng.uniform(-spread, spread))
-    obj.location.z = 0.0
+    """Randomize location, rotation (all axes), and optionally uniform scale.
 
-    obj.rotation_euler[0] = float(rng.uniform(0.0, 2.0 * math.pi))
-    obj.rotation_euler[1] = float(rng.uniform(0.0, 2.0 * math.pi))
-    obj.rotation_euler[2] = float(rng.uniform(0.0, 2.0 * math.pi))
+    If bounds_objs is provided (list of Blender Empty objects), location is
+    sampled within the union bounding box of those empties.  Falls back to
+    the spread-based placement when bounds_objs is empty or all None.
 
-    s = float(rng.uniform(scale_min, scale_max))
-    obj.scale = (s, s, s)
+    Pass randomize_scale=False to preserve the object's imported scale (used
+    for target .glb models whose apparent size should vary only with camera
+    distance, not explicit scale).
+    """
+    if bounds_objs:
+        # Pick one bounding box at random (equal probability) and place within it
+        empty = bounds_objs[int(rng.integers(0, len(bounds_objs)))]
+        loc = empty.location
+        sc  = empty.scale
+        obj.location.x = float(rng.uniform(loc.x - abs(sc.x), loc.x + abs(sc.x)))
+        obj.location.y = float(rng.uniform(loc.y - abs(sc.y), loc.y + abs(sc.y)))
+        obj.location.z = float(rng.uniform(loc.z - abs(sc.z), loc.z + abs(sc.z)))
+    else:
+        obj.location.x = float(rng.uniform(-spread, spread))
+        obj.location.y = float(rng.uniform(-spread, spread))
+        obj.location.z = 0.0
+
+    rx = float(rng.uniform(0.0, 2.0 * math.pi))
+    ry = float(rng.uniform(0.0, 2.0 * math.pi))
+    rz = float(rng.uniform(0.0, 2.0 * math.pi))
+    obj.rotation_quaternion = mathutils.Euler((rx, ry, rz), 'XYZ').to_quaternion()
+
+    if randomize_scale:
+        s = float(rng.uniform(scale_min, scale_max))
+        obj.scale = (s, s, s)
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +157,37 @@ def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> dict:
     light_obj["color_temp_K"] = int(round(ktemp))
     scene.collection.objects.link(light_obj)
 
-    # Position: X-side of scene (same hemisphere as camera)
-    light_obj.location.x = float(rng.uniform(1.0, 3.0))
-    light_obj.location.y = float(rng.uniform(-2.0, 2.0))
-    light_obj.location.z = float(rng.uniform(1.0, 3.0))
+    # Position: sample on sphere of radius [radius_min, radius_max], reject if
+    # inside the camera frustum cone (camera fixed at (2.87,0,0) looking at -X).
+    CAM_POS  = mathutils.Vector((2.87, 0.0, 0.0))
+    VIEW_DIR = mathutils.Vector((-1.0,  0.0, 0.0))
+    FOV_HALF = math.radians(32.0)   # 32° exclusion half-angle (covers 35mm FOV + margin)
+    FALLBACK = mathutils.Vector((0.0, 3.5, 2.0))  # guaranteed off-screen
+
+    r_min = lc.get("radius_min", 2.0)
+    r_max = lc.get("radius_max", 4.5)
+
+    light_pos = None
+    for _ in range(20):
+        r     = float(rng.uniform(r_min, r_max))
+        theta = float(rng.uniform(0.0, math.pi))
+        phi   = float(rng.uniform(0.0, 2.0 * math.pi))
+        candidate = mathutils.Vector((
+            r * math.sin(theta) * math.cos(phi),
+            r * math.sin(theta) * math.sin(phi),
+            r * math.cos(theta),
+        ))
+        to_light = (candidate - CAM_POS).normalized()
+        cos_a    = max(-1.0, min(1.0, to_light.dot(VIEW_DIR)))
+        if math.acos(cos_a) >= FOV_HALF:
+            light_pos = candidate
+            break
+    if light_pos is None:
+        light_pos = FALLBACK
+
+    light_obj.location.x = light_pos.x
+    light_obj.location.y = light_pos.y
+    light_obj.location.z = light_pos.z
 
     # Target: a point near scene centre along the X-axis
     target_loc = mathutils.Vector((
@@ -211,6 +260,54 @@ def randomize_background_roughness(scene, rng: np.random.Generator, cfg: dict) -
                              if n.type == "BSDF_PRINCIPLED"), None)
                 if bsdf:
                     bsdf.inputs["Roughness"].default_value = roughness
+    return roughness
+
+
+def randomize_background_material(
+    scene,
+    rng: np.random.Generator,
+    cfg: dict,
+    bg_image_path: Path,
+) -> float:
+    """Apply bg_image_path as Base Color texture on the Background plane and
+    randomize its roughness.  Returns the roughness value for label logging.
+    """
+    sc = cfg["scene"]
+    roughness = float(rng.uniform(
+        sc.get("background_roughness_min", 0.3),
+        sc.get("background_roughness_max", 1.0),
+    ))
+
+    bg_col = bpy.data.collections.get("Background")
+    if not bg_col:
+        return roughness
+    bg_mesh = next((o for o in bg_col.objects if o.type == "MESH"), None)
+    if bg_mesh is None:
+        return roughness
+
+    if not bg_mesh.data.materials:
+        mat = bpy.data.materials.new(name="sdg_bg_mat")
+        bg_mesh.data.materials.append(mat)
+    mat = bg_mesh.data.materials[0]
+    mat.use_nodes = True
+
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+
+    bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is None:
+        return roughness
+
+    tex_node = nodes.get("sdg_bg_tex")
+    if tex_node is None:
+        tex_node = nodes.new("ShaderNodeTexImage")
+        tex_node.name = "sdg_bg_tex"
+
+    tex_node.image = bpy.data.images.load(
+        str(Path(bg_image_path).resolve()), check_existing=True
+    )
+    links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = roughness
     return roughness
 
 

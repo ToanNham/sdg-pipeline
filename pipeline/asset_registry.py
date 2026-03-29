@@ -24,13 +24,12 @@ class AssetRegistry:
         self._pools[pool].append(asset)
 
     def sample(self, pool: str, rng: np.random.Generator,
-               n: int = 1) -> list:
+               n: int = 1, replace: bool = False) -> list:
         candidates = self._pools[pool]
         if not candidates:
             return []
-        idx = rng.choice(len(candidates),
-                         size=min(n, len(candidates)),
-                         replace=False)
+        n_actual = n if replace else min(n, len(candidates))
+        idx = rng.choice(len(candidates), size=n_actual, replace=replace)
         return [candidates[i] for i in idx]
 
     def count(self, pool: str) -> int:

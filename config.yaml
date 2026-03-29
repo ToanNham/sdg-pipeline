@@ -8,13 +8,15 @@ render:
   resolution_y: 1080
 
 scene:
-  objects_per_scene_min: 1
+  objects_per_scene_min: 1       # kept for reference; per-class counts now control spawn
   objects_per_scene_max: 4
+  per_class_min: 1               # min instances spawned per model category per image
+  per_class_max: 2               # max instances spawned per model category per image
   distractors_min: 2
   distractors_max: 6
   distractor_scale_min: 0.05
   distractor_scale_max: 0.15
-  target_spread: 0.5              # XY placement radius for target objects (metres)
+  target_spread: 0.5              # fallback XY spread if Bounds empties not found
   background_roughness_min: 0.3
   background_roughness_max: 1.0
 
@@ -27,8 +29,8 @@ camera:
   focal_length_max: 55
 
 lighting:
-  num_lights_min: 1
-  num_lights_max: 3
+  radius_min: 2.0                # min distance from scene centre for light placement
+  radius_max: 4.5                # max distance from scene centre for light placement
   intensity_min: 500
   intensity_max: 4000
   color_temp_min: 3200

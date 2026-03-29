@@ -14,7 +14,7 @@ from pipeline.scene_builder     import (clear_scene, spawn_targets,
 from pipeline.randomizer        import (randomize_camera, randomize_lights,
                                         randomize_object_transform,
                                         randomize_material,
-                                        randomize_background_roughness)
+                                        randomize_background_material)
 from pipeline.renderer          import (configure_cycles, enable_object_index_pass,
                                         setup_compositor, render)
 from pipeline.mask_extractor    import load_instance_masks, build_semantic_mask
@@ -61,7 +61,9 @@ enable_object_index_pass(view_layer)
 
 coco    = init_coco(cfg)
 ann_id  = 0
-cam_obj = scene.camera
+cam_obj     = scene.camera
+bounds_col  = bpy.data.collections.get("Bounds")
+BOUNDS_OBJS = [o for o in bounds_col.objects if o.type == "EMPTY"] if bounds_col else []
 
 # ── Main loop ───────────────────────────────────────────────────────────────
 for img_idx in range(args.start, end):
@@ -74,9 +76,12 @@ for img_idx in range(args.start, end):
     if bg:
         set_background(bg[0].path)
 
-    n_targets = int(rng.integers(cfg["scene"]["objects_per_scene_min"],
-                                  cfg["scene"]["objects_per_scene_max"] + 1))
-    target_assets = registry.sample("models", rng, n=n_targets)
+    per_class_min = cfg["scene"].get("per_class_min", 1)
+    per_class_max = cfg["scene"].get("per_class_max", 2)
+    target_assets = []
+    for asset in registry._pools["models"]:
+        count = int(rng.integers(per_class_min, per_class_max + 1))
+        target_assets.extend([asset] * count)
     target_objs   = spawn_targets(target_assets, rng, cfg)
     distractor_objs = spawn_distractors(registry, rng, cfg)
 
@@ -90,19 +95,21 @@ for img_idx in range(args.start, end):
     light_info  = {}
     bg_roughness = 0.5
     if not args.debug:
-        randomize_camera(cam_obj, rng, cfg)
         light_info  = randomize_lights(scene, rng, cfg)
-        bg_roughness = randomize_background_roughness(scene, rng, cfg)
+        if bg:
+            bg_roughness = randomize_background_material(scene, rng, cfg, bg[0].path)
         tex = registry.sample("textures", rng, n=1)
         tex = tex[0] if tex else None
         d_scale_min = cfg["scene"].get("distractor_scale_min", 0.05)
         d_scale_max = cfg["scene"].get("distractor_scale_max", 0.15)
         t_spread = cfg["scene"].get("target_spread", 0.5)
         for obj in target_objs:
-            randomize_object_transform(obj, rng, spread=t_spread)
+            randomize_object_transform(obj, rng, spread=t_spread,
+                                       bounds_objs=BOUNDS_OBJS, randomize_scale=False)
             randomize_material(obj, rng, cfg, texture_asset=tex)
         for obj in distractor_objs:
-            randomize_object_transform(obj, rng, scale_min=d_scale_min, scale_max=d_scale_max)
+            randomize_object_transform(obj, rng, scale_min=d_scale_min, scale_max=d_scale_max,
+                                       bounds_objs=BOUNDS_OBJS, randomize_scale=True)
             randomize_material(obj, rng, cfg, texture_asset=tex)
 
     # In debug mode, read light info from whatever is in the scene
