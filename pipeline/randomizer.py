@@ -82,7 +82,11 @@ def randomize_camera(cam_obj, rng: np.random.Generator, cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def randomize_object_transform(
-    obj, rng: np.random.Generator, spread: float = 1.5
+    obj,
+    rng: np.random.Generator,
+    spread: float = 1.5,
+    scale_min: float = 0.7,
+    scale_max: float = 1.3,
 ) -> None:
     """Randomize location (XY only), rotation (all axes), and uniform scale."""
     obj.location.x = float(rng.uniform(-spread, spread))
@@ -93,7 +97,7 @@ def randomize_object_transform(
     obj.rotation_euler[1] = float(rng.uniform(0.0, 2.0 * math.pi))
     obj.rotation_euler[2] = float(rng.uniform(0.0, 2.0 * math.pi))
 
-    s = float(rng.uniform(0.7, 1.3))
+    s = float(rng.uniform(scale_min, scale_max))
     obj.scale = (s, s, s)
 
 
@@ -101,8 +105,17 @@ def randomize_object_transform(
 # Lights
 # ---------------------------------------------------------------------------
 
-def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> None:
-    """Delete all existing lights and spawn N new randomized lights."""
+def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> dict:
+    """Delete all existing lights and spawn a single randomized SPOT light.
+
+    Returns a dict with the light's scene properties for label generation:
+        {
+            "Spot_Light_Location":   [x, y, z],
+            "Light_Target_Location": [x, y, z],
+            "Spot_Light_Energy":     float,
+            "Spot_Light_Temperature": int,
+        }
+    """
     lc = cfg["lighting"]
 
     # Remove all current light objects
@@ -110,19 +123,39 @@ def randomize_lights(scene, rng: np.random.Generator, cfg: dict) -> None:
         if obj.type == "LIGHT":
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    n = int(rng.integers(lc["num_lights_min"], lc["num_lights_max"] + 1))
-    for i in range(n):
-        ltype = _LIGHT_TYPES[int(rng.integers(0, len(_LIGHT_TYPES)))]
-        light_data = bpy.data.lights.new(name=f"sdg_light_{i}", type=ltype)
-        light_data.energy = float(rng.uniform(lc["intensity_min"], lc["intensity_max"]))
-        ktemp = float(rng.uniform(lc["color_temp_min"], lc["color_temp_max"]))
-        light_data.color = kelvin_to_rgb(ktemp)
+    ktemp  = float(rng.uniform(lc["color_temp_min"], lc["color_temp_max"]))
+    energy = float(rng.uniform(lc["intensity_min"],  lc["intensity_max"]))
 
-        light_obj = bpy.data.objects.new(name=f"sdg_light_{i}", object_data=light_data)
-        scene.collection.objects.link(light_obj)
-        light_obj.location.x = float(rng.uniform(-3.0, 3.0))
-        light_obj.location.y = float(rng.uniform(-3.0, 3.0))
-        light_obj.location.z = float(rng.uniform(1.5, 4.5))
+    light_data = bpy.data.lights.new(name="sdg_spot", type="SPOT")
+    light_data.energy     = energy
+    light_data.color      = kelvin_to_rgb(ktemp)
+    light_data.spot_size  = float(rng.uniform(math.radians(30), math.radians(90)))
+
+    light_obj = bpy.data.objects.new(name="sdg_spot", object_data=light_data)
+    light_obj["color_temp_K"] = int(round(ktemp))
+    scene.collection.objects.link(light_obj)
+
+    # Position: X-side of scene (same hemisphere as camera)
+    light_obj.location.x = float(rng.uniform(1.0, 3.0))
+    light_obj.location.y = float(rng.uniform(-2.0, 2.0))
+    light_obj.location.z = float(rng.uniform(1.0, 3.0))
+
+    # Target: a point near scene centre along the X-axis
+    target_loc = mathutils.Vector((
+        float(rng.uniform(0.3, 0.8)),
+        float(rng.uniform(-0.2, 0.2)),
+        0.0,
+    ))
+    direction = target_loc - light_obj.location
+    light_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    light_obj["target_loc"] = list(target_loc)
+
+    return {
+        "Spot_Light_Location":    [round(v, 8) for v in light_obj.location],
+        "Light_Target_Location":  [round(v, 8) for v in target_loc],
+        "Spot_Light_Energy":      energy,
+        "Spot_Light_Temperature": int(round(ktemp)),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +191,27 @@ def _apply_texture_set(nodes, links, bsdf, tex_dir: Path) -> None:
         nmap_node = nodes.new("ShaderNodeNormalMap")
         links.new(normal_node.outputs["Color"], nmap_node.inputs["Color"])
         links.new(nmap_node.outputs["Normal"], bsdf.inputs["Normal"])
+
+
+def randomize_background_roughness(scene, rng: np.random.Generator, cfg: dict) -> float:
+    """Set roughness on the background plane material; return the chosen value."""
+    sc = cfg["scene"]
+    roughness = float(rng.uniform(
+        sc.get("background_roughness_min", 0.3),
+        sc.get("background_roughness_max", 1.0),
+    ))
+    bg_col = bpy.data.collections.get("Background")
+    if bg_col:
+        for obj in bg_col.objects:
+            if obj.type != "MESH" or not obj.data.materials:
+                continue
+            mat = obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = next((n for n in mat.node_tree.nodes
+                             if n.type == "BSDF_PRINCIPLED"), None)
+                if bsdf:
+                    bsdf.inputs["Roughness"].default_value = roughness
+    return roughness
 
 
 def randomize_material(

@@ -79,7 +79,14 @@ def spawn_targets(assets: list, rng, cfg) -> list:
         for obj in objs:
             obj["category_id"] = asset.category_id
             obj["category_name"] = asset.category_name
+            obj.hide_render = False
+            obj.hide_viewport = False
         all_objects.extend(objs)
+
+    col = bpy.data.collections.get("Randomize")
+    if col:
+        col.hide_render = False
+
     return all_objects
 
 

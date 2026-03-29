@@ -12,14 +12,19 @@ scene:
   objects_per_scene_max: 4
   distractors_min: 2
   distractors_max: 6
+  distractor_scale_min: 0.05
+  distractor_scale_max: 0.15
+  target_spread: 0.5              # XY placement radius for target objects (metres)
+  background_roughness_min: 0.3
+  background_roughness_max: 1.0
 
 camera:
-  distance_min: 1.5
-  distance_max: 4.0
+  distance_min: 2.0
+  distance_max: 3.5
   elevation_min_deg: 15
   elevation_max_deg: 75
   focal_length_min: 35
-  focal_length_max: 85
+  focal_length_max: 55
 
 lighting:
   num_lights_min: 1

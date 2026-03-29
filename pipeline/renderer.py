@@ -66,6 +66,7 @@ def setup_compositor(scene, img_idx: int, output_dir: Path, id_map: dict) -> Non
         output_dir/masks_instance/{img_idx:04d}_inst_{K}_0001.png  (one per inst_id K)
     """
     scene.use_nodes = True
+    scene.render.use_compositing = True  # compositor must execute during render
     tree = scene.node_tree
     tree.nodes.clear()
 
@@ -109,4 +110,5 @@ def render(scene) -> None:
         scene: bpy.context.scene (used implicitly by bpy.ops)
     """
     import bpy
+    scene.frame_current = 1  # ensures compositor appends _0001 suffix
     bpy.ops.render.render()
